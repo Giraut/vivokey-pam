@@ -53,7 +53,7 @@ and the login succeeds. If not, the login fails on the second pam_deny.so.
 
 In this case, note the use of the -au flag: this tells vivokey_pam.py to let
 users not listed in the /etc/users.vivokey "through" - instead of denying them
-authentication by default. Without -au, users that don't have a Vivokey OTP
+authentication by default. Without -au, users who don't have a Vivokey OTP
 setup could not log in anymore. If it should be desirable that all the users
 use a Vivokey device to login, all of them should be enrolled in
 /etc/users.vivokey and the -au should then be dropped.

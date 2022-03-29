@@ -23,6 +23,7 @@ ASCII art.
 This is convenient if the user is around while doing the setup - particularly
 since they'll have to type in their OATH password if they have one set up in
 their Vivokey device.
+
 But more importantly, it avoids saving the secret to a file and mailing it,
 and having to ask the user to carefully delete the image file and email after
 they're done setting up the account in the Vivokey Authenticator app.
