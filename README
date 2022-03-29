@@ -51,11 +51,6 @@ Installation
 PAM configuration
 -----------------
 
-
-   It is also very important that this file be present and readable by root
-   *BEFORE* enabling the Vivokey PAM module, especially if it's configured for
-   2FA, as it will deny authentication to everyone and prevent everyone from
-   logging in if it can't read that file in that case.
   PAM configurations and configuration methoda varies from one Linux
   distribution to the next. The examples below are just guidelines.
 
@@ -172,6 +167,7 @@ OATH account setup
   This is convenient if the user is around while doing the setup - particularly
   since they'll have to type in their OATH password if they have one set up in
   their Vivokey device.
+
   But more importantly, it avoids saving the secret to a file and mailing it,
   and having to ask the user to carefully delete the image file and email after
   they're done setting up the account in the Vivokey Authenticator app.
