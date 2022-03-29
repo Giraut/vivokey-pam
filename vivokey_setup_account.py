@@ -18,7 +18,7 @@ The QR code may be saved into a PNG image file using -o <file>. This image may
 then be mailed to the user.
 
 However, by default, the QR code is rendered directly on the terminal using
-ASCII art.  
+ASCII art.
 
 This is convenient if the user is around while doing the setup - particularly
 since they'll have to type in their OATH password if they have one set up in
@@ -186,8 +186,10 @@ if __name__ == "__main__":
     with open(args.cfgfile, "r") as f:
       lines = f.read().splitlines()
 
-  except:
-    lines = []
+  except Exception as e:
+    print("Error reading configuration file {}: {}".format(args.cfgfile, e),
+		file = sys.stderr)
+    exit(-1)
 
   # Prune any existing configuration lines that concern this user
   lines = [l for l in lines if not l.lstrip().startswith(args.user)]

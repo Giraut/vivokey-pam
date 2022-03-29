@@ -1,6 +1,6 @@
                                   Vivokey PAM
                                   -----------
-                                    v0.0.1
+                                    v0.0.2
 
 
 PAM module and configuration utility to perform user authentication (1FA or 2FA)
@@ -31,11 +31,31 @@ Installation
 
      sudo apt install vivokey-pam
 
+3/ Create an empty /etc/users.vivokey file owned by root, readable and writeable
+   only by root:
+
+     touch /etc/users.vivokey
+     chown root.root /etc/users.vivokey
+     chmod 600 /etc/users.vivokey
+
+   This is very important because this file will contain all the users' OATH
+   passwords and secrets, so it should not be readable by unauthorized users.
+
+   It is also very important that this file be present and readable by root
+   *BEFORE* enabling the Vivokey PAM module, especially if it's configured for
+   2FA, as it will deny authentication to everyone and prevent everyone from
+   logging in if it can't read that file in that case.
+
 
 
 PAM configuration
 -----------------
 
+
+   It is also very important that this file be present and readable by root
+   *BEFORE* enabling the Vivokey PAM module, especially if it's configured for
+   2FA, as it will deny authentication to everyone and prevent everyone from
+   logging in if it can't read that file in that case.
   PAM configurations and configuration methoda varies from one Linux
   distribution to the next. The examples below are just guidelines.
 
