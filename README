@@ -6,7 +6,7 @@
 PAM module and configuration utility to perform user authentication (1FA or 2FA)
 using a Vivokey device and the Vivokey OTP applet.
 
-This PAM module uses the Vivokey Manager command line utility. See:
+This PAM module uses the Vivokey Manager command line utility.
 
 
 
