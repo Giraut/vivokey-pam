@@ -1,0 +1,5 @@
+# Username  OATH account         OATH password  OATH secret
+alice       alice@localhost      s00p3rs3cr3t   c440efbaba366a1b5e00  #Active
+bob         bob@server.acme.com  -              5af022b3fa747e125c1d  #Active
+charlie     -                    -              -                     #Disabled
+dave                                                                  #Disabled

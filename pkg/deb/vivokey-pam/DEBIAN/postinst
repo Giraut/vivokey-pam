@@ -1,0 +1,24 @@
+#!/bin/sh
+
+PAM_CONFIG=/usr/share/pam-configs/vivokey_pam.config
+
+# If we have a Vivokey PAM configuration file backup, it means we're running
+# after preinst
+if [ -f ${PAM_CONFIG}.BAK ]; then
+
+  # Check if the Vivokey PAM configuration file has been installed for the
+  # first time, or if it has changed, and advise the user to (re-)run
+  # pam-auth-update if it has
+  if [ ! -s ${PAM_CONFIG}.BAK ]; then
+    echo "${PAM_CONFIG} HAS BEEN INSTALLED. YOU PROBABLY SHOULD RUN PAM-AUTH-UPDATE!"
+
+  else
+    if ! cmp -s ${PAM_CONFIG} ${PAM_CONFIG}.BAK; then
+      echo "${PAM_CONFIG} HAS CHANGED. YOU PROBABLY SHOULD RE-RUN PAM-AUTH-UPDATE!"
+    fi
+
+  fi
+
+  # Remove the backup file of the previous Vivokey PAM configuration file
+  rm ${PAM_CONFIG}.BAK
+fi

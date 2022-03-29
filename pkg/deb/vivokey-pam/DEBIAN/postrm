@@ -1,0 +1,9 @@
+#!/bin/sh
+
+PAM_CONFIG=/usr/share/pam-configs/vivokey_pam.config
+
+# If the Vivokey PAM configuration file has been removed, advise the user to
+# re-run pam-auth-update
+if [ ! -f ${PAM_CONFIG} ]; then
+  echo "${PAM_CONFIG} HAS BEEN REMOVED. YOU PROBABLY SHOULD RE-RUN PAM-AUTH-UPDATE!"
+fi
