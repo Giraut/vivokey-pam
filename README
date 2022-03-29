@@ -34,9 +34,9 @@ Installation
 3/ Create an empty /etc/users.vivokey file owned by root, readable and writeable
    only by root:
 
-     touch /etc/users.vivokey
-     chown root.root /etc/users.vivokey
-     chmod 600 /etc/users.vivokey
+     sudo touch /etc/users.vivokey
+     sudo chown root.root /etc/users.vivokey
+     sudo chmod 600 /etc/users.vivokey
 
    This is very important because this file will contain all the users' OATH
    passwords and secrets, so it should not be readable by unauthorized users.
@@ -51,7 +51,7 @@ Installation
 PAM configuration
 -----------------
 
-  PAM configurations and configuration methoda varies from one Linux
+  PAM configurations and configuration methods vary from one Linux
   distribution to the next. The examples below are just guidelines.
 
   If your system uses libpam-runtime (i.e. you have a pam-auth-update utility
@@ -100,7 +100,7 @@ PAM configuration
 
   In this case, note the use of the -au flag: this tells vivokey_pam.py to let
   users not listed in the /etc/users.vivokey "through" - instead of denying them
-  authentication by default. Without -au, users that don't have a Vivokey OTP
+  authentication by default. Without -au, users who don't have a Vivokey OTP
   setup could not log in anymore. If it should be desirable that all the users
   use a Vivokey device to login, all of them should be enrolled in
   /etc/users.vivokey and the -au should then be dropped.
