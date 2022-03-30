@@ -36,6 +36,7 @@ the device.
 """
 
 ### Modules
+import re
 import os
 import sys
 import qrcode
@@ -65,14 +66,18 @@ ansi_reset = "\033[00m"
 
 
 ### Routines
-def generate_bw_ascii_art(img, use_unicode = True):
+def generate_bw_ascii_art(img, use_unicode = True,
+				cols = None, max_trim_to_fit_cols = 0):
   """Generate a printable string containing a sequence of basic ANSI codes and
   block unicode characters to render a black and white image in ASCII art
+
+  if max_trim_to_fit_cols > 0, the image will be trimmed by as many as this
+  number of characters left and right to try to fit within cols columns - but
+  only if it makes the image fit
   """
 
   data = np.array(img)
-
-  s = ""
+  aa_lines = []
 
   # Can we use unicode characters?
   if use_unicode:
@@ -80,30 +85,16 @@ def generate_bw_ascii_art(img, use_unicode = True):
     # Scan even and odd pairs of lines
     for upper_line, lower_line in zip(data[:-1:2, ...], data[1::2, ...]):
 
-      if s:
-        s += "\n"
-
-      # Set white on black before starting rendering one line, in case the user
-      # has set their terminal with some other color scheme
-      s += ansi_white_on_black
+      l = ""
 
       # Scan all the pixels in that pair of lines
       for upper_pixel, lower_pixel in zip(upper_line, lower_line):
 
-        # Render 2 vertical pixels
-        if upper_pixel:	# White upper pixel
-          if lower_pixel:	# White lower pixel
-            s += unicode_full_block
-          else:		# Black lower pixel
-            s += unicode_upper_half_block
-        else:		# Black upper pixel
-          if lower_pixel:	# White lower pixel
-            s += unicode_lower_half_block
-          else:		# Black lower pixel
-            s += " "
+        l += (unicode_full_block if lower_pixel else unicode_upper_half_block) \
+		if upper_pixel else \
+		(unicode_lower_half_block if lower_pixel else " ")
 
-      # Reset the graphic mode at the end of the line
-      s += ansi_reset
+      aa_lines.append(l)
 
   # Only use ANSI colors and the space character
   else:
@@ -111,27 +102,34 @@ def generate_bw_ascii_art(img, use_unicode = True):
     # Scan lines
     for line in data[::, ...]:
 
-      if s:
-        s += "\n"
-
-      # Make sure we always set the color for the first pixel of the line
-      current_ansi_color = None
+      l = ""
 
       # Scan all the pixels in that line
       for pixel in line:
 
-        # Switch color if we have to for this pixel
-        ansi_color = ansi_black_on_white if pixel else ansi_white_on_black
+        # Encode 1 vertical pixel
+        l += "##" if pixel else "  "
 
-        if current_ansi_color != ansi_color:
-          s += ansi_color
-          current_ansi_color = ansi_color
+      aa_lines.append(l)
 
-        # Render the pixel
-        s += "  "
+  # Try to fit the lines within the number of colums by trimming them
+  # left and right
+  if cols and max_trim_to_fit_cols:
+    nbcols = len(aa_lines[0])
 
-      # Reset the graphic mode at the end of the line
-      s += ansi_reset
+    if cols < nbcols <= cols + max_trim_to_fit_cols:
+      ltrim = (nbcols - cols) // 2
+      aa_lines = [l[ltrim : cols + ltrim] for l in aa_lines]
+
+  # Encoding the final ASCII art sequence
+  if use_unicode:
+    s = "\n".join([ansi_white_on_black + l + ansi_reset for l in aa_lines])
+
+  else:
+    s = "\n".join([re.sub("[# ]", " ",
+			re.sub("(#+)", ansi_black_on_white + "\\1",
+			re.sub("( +)", ansi_white_on_black + "\\1", l))) + \
+			ansi_reset for l in aa_lines])
 
   return s
 
@@ -187,13 +185,18 @@ if __name__ == "__main__":
   # If we render the QR code directly in the terminal, generate it with a 1x1
   # block size, render it and print it - first in plain (but huge) plain ASCII,
   # then in more compact (but not necessarily well-rendered) ASCII with unicode
-  # characters, so that at least one of them is shown properly
+  # characters, so that at least one of them is shown properly.
+  # If unicode isn't used, each QR code pixel is composed of 2 spaces, so we can
+  # bend the rules a bit and shrink the rendering one character left and right
+  # to fit a very common 33x33 QR code into an equally-common 80-column display.
   if args.output == "-":
+    cols = os.get_terminal_size().columns
     print()
-    print(generate_bw_ascii_art(qrcode.make(qrdata, box_size = 1), False))
-    print()
-    print(generate_bw_ascii_art(qrcode.make(qrdata, box_size = 1), True))
-    print()
+    for uu in (False, True):
+      print(generate_bw_ascii_art(qrcode.make(qrdata, box_size = 1),
+					cols = cols,
+					max_trim_to_fit_cols = 0 if uu else 2,
+					use_unicode = uu), end = "\n\n")
 
   # If we save the QR code into a file, generate it with the default block size
   # and save it
