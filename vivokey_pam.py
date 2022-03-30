@@ -384,7 +384,7 @@ def main():
 
     # Did we get an error trying to run the command?
     except Exception as e:
-      print("NOAUTH: error running vkman command: {}".format(e))
+      print("NOAUTH: error running vkman: {}".format(e))
       return 1
 
     # Did the command return an error code?
@@ -396,19 +396,19 @@ def main():
         continue
 
       # Any other error, we abort
-      print("NOAUTH: error running vkman command{}".
+      print("NOAUTH: error running vkman command {}".
 		format("" if not stderr_lines else ": " + stderr_lines[0]))
       return 1
 
     # Did the command fail to return anything on stdout?
     if not stdout_lines:
-      print("NOAUTH: nothing returned by vkman command")
+      print("NOAUTH: nothing returned by vkman")
       return 1
 
     # Did the command return a malformed OTP code?
     code = stdout_lines[0]
     if not re.match("^[0-9]{6,10}$", code):
-      print("NOAUTH: vkman command returned malformed TOTP code {}".
+      print("NOAUTH: vkman returned malformed TOTP code {}".
 		format(code))
       return 1
 
