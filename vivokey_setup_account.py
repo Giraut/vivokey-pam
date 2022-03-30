@@ -80,9 +80,14 @@ def generate_bw_ascii_art(img):
     if s:
       s += "\n"
 
+    # Set white on black before starting rendering one line, in case the user
+    # has set their terminal with some other color scheme
+    s += ansi_set_white_on_black
+
     # Scan all the pixels in that pair of lines
     for upper_pixel, lower_pixel in zip(upper_line, lower_line):
 
+      # Render 2 vertical pixels
       if upper_pixel:	# White upper pixel
         if lower_pixel:	# White lower pixel
           s += unicode_full_block
@@ -94,9 +99,8 @@ def generate_bw_ascii_art(img):
         else:		# Black lower pixel
           s += " "
 
-  # Set white on black before the rendering, in case the user has set their
-  # terminal with some other color scheme, then reset the graphic mode
-  s = ansi_set_white_on_black + s + ansi_reset
+    # Reset the graphic mode at the end of the line
+    s += ansi_reset
 
   return s
 
