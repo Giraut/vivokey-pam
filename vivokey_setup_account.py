@@ -58,13 +58,14 @@ nb_secret_digits = 10
 unicode_upper_half_block = "\u2580"
 unicode_lower_half_block = "\u2584"
 unicode_full_block = "\u2588"
-ansi_set_white_on_black = "\033[97;40m"
+ansi_white_on_black = "\033[97;40m"
+ansi_black_on_white = "\033[30;107m"
 ansi_reset = "\033[00m"
 
 
 
 ### Routines
-def generate_bw_ascii_art(img):
+def generate_bw_ascii_art(img, use_unicode = True):
   """Generate a printable string containing a sequence of basic ANSI codes and
   block unicode characters to render a black and white image in ASCII art
   """
@@ -73,34 +74,64 @@ def generate_bw_ascii_art(img):
 
   s = ""
 
-  # Scan even and odd pairs of lines if we do unicode, or all single lines
-  # arranged as pairs if we don't
-  for upper_line, lower_line in zip(data[:-1:2, ...], data[1::2, ...]):
+  # Can we use unicode characters?
+  if use_unicode:
 
-    if s:
-      s += "\n"
+    # Scan even and odd pairs of lines
+    for upper_line, lower_line in zip(data[:-1:2, ...], data[1::2, ...]):
 
-    # Set white on black before starting rendering one line, in case the user
-    # has set their terminal with some other color scheme
-    s += ansi_set_white_on_black
+      if s:
+        s += "\n"
 
-    # Scan all the pixels in that pair of lines
-    for upper_pixel, lower_pixel in zip(upper_line, lower_line):
+      # Set white on black before starting rendering one line, in case the user
+      # has set their terminal with some other color scheme
+      s += ansi_white_on_black
 
-      # Render 2 vertical pixels
-      if upper_pixel:	# White upper pixel
-        if lower_pixel:	# White lower pixel
-          s += unicode_full_block
-        else:		# Black lower pixel
-          s += unicode_upper_half_block
-      else:		# Black upper pixel
-        if lower_pixel:	# White lower pixel
-          s += unicode_lower_half_block
-        else:		# Black lower pixel
-          s += " "
+      # Scan all the pixels in that pair of lines
+      for upper_pixel, lower_pixel in zip(upper_line, lower_line):
 
-    # Reset the graphic mode at the end of the line
-    s += ansi_reset
+        # Render 2 vertical pixels
+        if upper_pixel:	# White upper pixel
+          if lower_pixel:	# White lower pixel
+            s += unicode_full_block
+          else:		# Black lower pixel
+            s += unicode_upper_half_block
+        else:		# Black upper pixel
+          if lower_pixel:	# White lower pixel
+            s += unicode_lower_half_block
+          else:		# Black lower pixel
+            s += " "
+
+      # Reset the graphic mode at the end of the line
+      s += ansi_reset
+
+  # Only use ANSI colors and the space character
+  else:
+
+    # Scan lines
+    for line in data[::, ...]:
+
+      if s:
+        s += "\n"
+
+      # Make sure we always set the color for the first pixel of the line
+      current_ansi_color = None
+
+      # Scan all the pixels in that line
+      for pixel in line:
+
+        # Switch color if we have to for this pixel
+        ansi_color = ansi_black_on_white if pixel else ansi_white_on_black
+
+        if current_ansi_color != ansi_color:
+          s += ansi_color
+          current_ansi_color = ansi_color
+
+        # Render the pixel
+        s += "  "
+
+      # Reset the graphic mode at the end of the line
+      s += ansi_reset
 
   return s
 
@@ -127,8 +158,8 @@ if __name__ == "__main__":
 
   argparser.add_argument(
 	"-o", "--output",
-	help = "PNG image file to save the QR code in. Use - to render the "
-		"QR code in the console in ASCII art. Default: {}".
+	help = 'PNG image file to save the QR code in. Use "-" to render the '
+		'QR code in the console in ASCII. Default: {}'.
 		format(default_qrcode_out),
 	type = str,
 	default = default_qrcode_out)
@@ -151,13 +182,17 @@ if __name__ == "__main__":
 
   # Create the QR code data
   b32secret = b32encode(secret).decode("ascii")
-  qrdata = "otpauth://totp/{}?secret={}".format(args.account, b32secret)
+  qrdata = "otpauth://totp/{}?secret={}".format(account, b32secret)
 
   # If we render the QR code directly in the terminal, generate it with a 1x1
-  # block size, render it and print it
+  # block size, render it and print it - first in plain (but huge) plain ASCII,
+  # then in more compact (but not necessarily well-rendered) ASCII with unicode
+  # characters, so that at least one of them is shown properly
   if args.output == "-":
     print()
-    print(generate_bw_ascii_art(qrcode.make(qrdata, box_size = 1)))
+    print(generate_bw_ascii_art(qrcode.make(qrdata, box_size = 1), False))
+    print()
+    print(generate_bw_ascii_art(qrcode.make(qrdata, box_size = 1), True))
     print()
 
   # If we save the QR code into a file, generate it with the default block size
