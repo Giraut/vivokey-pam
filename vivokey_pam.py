@@ -396,7 +396,7 @@ def main():
         continue
 
       # Any other error, we abort
-      print("NOAUTH: error running vkman command {}".
+      print("NOAUTH: error running vkman command{}".
 		format("" if not stderr_lines else ": " + stderr_lines[0]))
       return 1
 
