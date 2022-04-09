@@ -4,4 +4,4 @@ Maintainer: Rosco <roskis@runbox.com>
 Description: PAM module and configuration utility to perform user authentication (1FA or 2FA) using a Vivokey device and the Vivokey OTP applet.
 Homepage: https://github.com/Giraut/vivokey-pam
 Architecture: all
-Depends: vivokey-manager, python3 (>=3.5), python3-pyotp, python3-qrcode, libpam-modules
+Depends: python3 (>=3.5), python3-pyotp, python3-qrcode, python3-cryptography, python3-pyscard, pcscd, libpam-modules
