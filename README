@@ -6,14 +6,14 @@
 PAM module and configuration utility to perform user authentication (1FA or 2FA)
 using a Vivokey device and the Vivokey OTP applet.
 
-This PAM module uses the Vivokey Manager command line utility.
-
 
 
 Installation
 ------------
 
-   Copy vivokey_pam.py to /usr/bin/vivokey_pam.py
+   Install the file as root:
+
+     install -m 755 vivokey_pam.py /usr/bin/
 
    Optionally, you can also install this PAM module and configuration utility
    from a pre-build Debian package:
