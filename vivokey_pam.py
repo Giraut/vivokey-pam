@@ -620,7 +620,7 @@ def parse_args(argv, user):
 	"			Default: deny authentication to unknown users",
 	"",
 	"       -h or --help	This help",
-	""]),) + (None,) * 6
+	""]),) + (None,) * 5
 
     elif arg == "-r":
       next_arg_is_reader = True
@@ -666,45 +666,45 @@ def parse_args(argv, user):
       user = arg[5:]
 
     else:
-      return ("Error: unknown argument: {}".format(arg),) + (None,) * 6
+      return ("Error: unknown argument: {}".format(arg),) + (None,) * 5
 
   if next_arg_is_reader:
-    return ("Error: missing -r value",) + (None,) * 6
+    return ("Error: missing -r value",) + (None,) * 5
 
   if next_arg_is_cfgfile:
-    return ("Error: missing -c value",) + (None,) * 6
+    return ("Error: missing -c value",) + (None,) * 5
 
   if next_arg_is_wait:
-    return ("Error: missing -w value",) + (None,) * 6
+    return ("Error: missing -w value",) + (None,) * 5
 
   if next_arg_is_user:
-    return ("Error: missing -u value",) + (None,) * 6
+    return ("Error: missing -u value",) + (None,) * 5
 
   # Fail if we don't have a reader name
   if not reader:
-    return ("Error: no reader name",) + (None,) * 6
+    return ("Error: no reader name",) + (None,) * 5
 
   # Fail if we don't have a path to the configuration file
   if not cfgfile:
-    return ("Error: no path to the configuration file",) + (None,) * 6
+    return ("Error: no path to the configuration file",) + (None,) * 5
 
   # Fail if we don't have a wait time
   if not wait:
-    return ("Error: no wait time",) + (None,) * 6
+    return ("Error: no wait time",) + (None,) * 5
 
   # Fail if the wait time is invalid
   try:
-    wait = int(wait)
+    wait = float(wait)
   except:
-    return ("Error: invalid wait time {}".format(wait),) + (None,) * 6
+    return ("Error: invalid wait time {}".format(wait),) + (None,) * 5
 
   # Fail if we don't have a user to authenticate
   if not user:
-    return ("Error: no username to authenticate",) + (None,) * 6
+    return ("Error: no username to authenticate",) + (None,) * 5
 
   # Check that the username is valid
   if not all([" " <= c <= "~" for c in user]):
-    return ("Error: invalid user= value: {}".format(user),) + (None,) * 6
+    return ("Error: invalid user {}".format(user),) + (None,) * 5
 
   return (None, reader, cfgfile, wait, user, authunknown)
 
@@ -797,82 +797,108 @@ def main():
     print(errmsg)
     return -1
 
-  # If the user isn't registered in the configuration file, deny them
-  # authentication by default, unless we were asked to authenticated them
-  if user not in cfg:
-    print("AUTHOK" if authunknown else "NOAUTH: {} is unknown".format(user))
-    return 0 if authunknown else 1
-
-  # If the user doesn't have an account or a secret, we can't authenticated them
-  if not cfg[user].acct:
-    print("NOAUTH: {} has no OATH account".format(user))
-    return 1
-
-  if not cfg[user].secret:
-    print("NOAUTH: {} has no OATH secret".format(user))
-    return 1
-
-  # If the user's secret is invalid or otherwise non-convertible into a base32
-  # string, we can't authenticate them
-  try:
-    b32secret = b32encode(bytes.fromhex(cfg[user].secret))
-
-  except:
-    print("NOAUTH: {} has an invalid OATH secret".format(user))
-    return 1
-
-  # Create a TOTP instance
-  totp = pyotp.TOTP(b32secret)
-
-  # Create a PC/SC oath code reader instance
-  po = pcsc_oath()
-
-  # Set the PC/SC readers regex and the OATH password
-  po.set_readers_regex(reader)
-  po.set_oath_pwd(cfg[user].pwd)
-
-  # Try reading until the waiting time to get a read is elapsed
   start_tstamp = time()
-  while time() - start_tstamp < wait:
+  retcode = None
 
-    errmsg, errcritical, iacs = po.get_codes()
+  while retcode is None:
 
-    # Did we get an error mesage?
-    if errmsg:
-
-      # Is it a critical error?
-      if errcritical:
-        print("NOAUTH: {}".format(errmsg))
-        return 1
-
+    # If the user isn't registered in the configuration file, deny them
+    # authentication by default, unless we were asked to authenticated them
+    if user not in cfg:
+      print("AUTHOK" if authunknown else "NOAUTH: {} is unknown".format(user))
+      retcode = 0 if authunknown else 1
       continue
 
-    # Get the code matching the user's registered OATH account in the read list
-    # There must be only one matching account
-    code = None
-    for i, a, c in iacs:
-      if a == cfg[user].acct:
-        if code is not None:
-          print("NOAUTH: more than once matching OATH account {}".format(a))
-          return 1
-        code = c
+    # If the user doesn't have an account or a secret, we can't
+    # authenticated them
+    if not cfg[user].acct:
+      print("NOAUTH: {} has no OATH account".format(user))
+      retcode = 1
+      continue
 
-    if code is None:
-      print("NOAUTH: OATH account {} not found".format(cfg[user].acct))
-      return 1
+    if not cfg[user].secret:
+      print("NOAUTH: {} has no OATH secret".format(user))
+      retcode = 1
+      continue
 
-    # Verify the code
-    if totp.verify(code):
-      print("AUTHOK")
-      return 0
+    # If the user's secret is invalid or otherwise non-convertible into a base32
+    # string, we can't authenticate them
+    try:
+      b32secret = b32encode(bytes.fromhex(cfg[user].secret))
 
-    else:
-      print("NOAUTH: invalid TOTP code")
-      return 1
+    except:
+      print("NOAUTH: {} has an invalid OATH secret".format(user))
+      retcode = 1
+      continue
 
-  # If we arrive here, we waited too long for a read
-  print("NOAUTH: timeout")
-  return 1
+    # Create a TOTP instance
+    totp = pyotp.TOTP(b32secret)
+
+    # Create a PC/SC oath code reader instance
+    po = pcsc_oath()
+
+    # Set the PC/SC readers regex and the OATH password
+    po.set_readers_regex(reader)
+    po.set_oath_pwd(cfg[user].pwd)
+
+    # Try reading until the waiting time to get a read is elapsed
+    while retcode is None and time() - start_tstamp < wait:
+
+      errmsg, errcritical, iacs = po.get_codes()
+
+      # Did we get an error mesage?
+      if errmsg:
+
+        # Is it a critical error?
+        if errcritical:
+          print("NOAUTH: {}".format(errmsg))
+          retcode = 1
+
+        continue
+
+      # Get the code matching the user's registered OATH account in the read
+      # list There must be only one matching account
+      code = None
+      for i, a, c in iacs:
+        if a == cfg[user].acct:
+
+          if code is not None:
+            print("NOAUTH: more than once matching OATH account {}".format(a))
+            retcode = 1
+            continue
+
+          code = c
+
+      if code is None:
+        print("NOAUTH: OATH account {} not found".format(cfg[user].acct))
+        retcode = 1
+        continue
+
+      # Verify the code
+      if totp.verify(code):
+        print("AUTHOK")
+        retcode = 0
+        continue
+
+      else:
+        print("NOAUTH: invalid TOTP code")
+        retcode = 1
+        continue
+
+    if retcode is not None:
+      continue
+
+    # If we arrive here, we waited too long for a read
+    print("NOAUTH: timeout")
+    retcode = 1
+
+  # If we arrive here with a non-zero return code (i.e. failed authentication)
+  # continue waiting until the end of the wait time to throttle repeated login
+  # attempts and avoid giving clues to the cause of the failed authentication
+  if retcode:
+    sleep(max(0, wait - time() + start_tstamp))
+
+  return retcode
 
 
 
