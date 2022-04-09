@@ -62,12 +62,8 @@ If the wait is not long enough to present the Vivokey device to the reader, use
 -w <wait> or wait=<wait> as argument to vivokey_py to orverride the default
 2-second wait.
 
-If the reader isn't recognized, use -r <name> or reader=<name> to specifiy the
-name matching the reader. The reader's name is passed to vkman.
-
-If the vkman executable isn't located in /usr/bin/vkman or the configuration
-file isn't located in /etc/users.vivokey, use -v <path> / vkman=<path> or
--c <path> / cfgfile=<path> to override the default locations for those files.
+If the reader isn't recognized, use -r <name> or reader=<name> to specifiy a
+name matching the reader.
 
 When using vivokey_pam.py as a standalone utility, you may use -u <user> or
 user=<user> to specify another user. By default, the current username is used.
@@ -77,16 +73,20 @@ user=<user> to specify another user. By default, the current username is used.
 import re
 import os
 import sys
+import hmac
 import pyotp
+import hashlib
+from struct import pack
+from random import randint
 from time import time, sleep
 from base64 import b32encode
+import smartcard.scard as sc
 from subprocess import Popen, PIPE
 
 
 
 ### Parameters
 default_reader = "0"
-default_vkman = "/usr/bin/vkman"
 default_wait = 2 #s
 default_cfgfile = "/etc/users.vivokey"
 
@@ -100,21 +100,498 @@ class oathcfg:
 
 
 
-### Common routines
+### Classes
+class pcsc_oath():
+  """Class to get the list of TOTP codes from an OATH applet running on an
+  ISO14443-4 smartcard using PC/SC
+  """
+
+  # Defines
+  DEFAULT_OATH_AID = "a0000007470061fc54d5"	# Vivokey OTP applet
+  DEFAULT_PERIOD = 30 #s
+
+  INS_SELECT = 0xa4
+  P1_SELECT = 0x04
+  P2_SELECT = 0x00
+
+  INS_VALIDATE = 0xa3
+
+  INS_CALCULATE_ALL = 0xa4
+  P2_CALCULATE_ALL_TRUNCATED = 0x01
+
+  INS_SEND_REMAINING = 0xa5
+
+  SW1_OK = 0x90
+  SW2_OK = 0x00
+
+  SW1_AUTH_ERROR = 0x69
+  SW2_AUTH_REQUIRED = 0x82
+  SW2_AUTH_FAILED = 0x84
+
+  SW1_WRONG_SYNTAX = 0x6a
+  SW2_WRONG_SYNTAX = 0x80
+
+  SW1_MORE_DATA = 0x61
+
+  NAME_TAG = 0x71
+  CHALLENGE_TAG = 0x74
+  RESPONSE_TAG = 0x75
+  TRUNCATED_TAG = 0x76
+
+
+
+  def __init__(self, oath_aid = DEFAULT_OATH_AID, period = DEFAULT_PERIOD):
+    """__init__ method
+    """
+
+    self.readers_regex = "^.*$"
+    self.oath_aid = list(bytes.fromhex(oath_aid))
+    self.period = period
+
+    self.all_readers = []
+    self.hcontext = None
+
+    self.reader = None
+
+    self.oath_pwd = None
+
+
+
+  def set_readers_regex(self, reader):
+    """Construct the readers regex from the string supplied by the user and
+    force the reader to be updated
+    """
+
+    self.readers_regex = "^.*{}.*$".format(reader)
+    self.all_readers = []
+
+
+
+  def set_oath_pwd(self, oath_pwd):
+    """Set the OATH password to use at the next get_code()
+    """
+
+    self.oath_pwd = oath_pwd
+
+
+
+  def _send_apdu(self, hcard, dwActiveProtocol, apdu):
+    """Send an APDU command, get and collate the response.
+    Returns (None, None, r, response) if no error,
+    (errmsg, err_critical_flag, None, None) otherwise.
+    """
+
+    try:
+      r, response = sc.SCardTransmit(hcard, dwActiveProtocol, apdu)
+
+    except Exception as e:
+      return (repr(e), True, None, None)
+
+    if len(response) < 2:
+      return ("APDU response too short", False, None, None)
+
+    while response[-2] == self.SW1_MORE_DATA:
+
+      try:
+        r, chunk = sc.SCardTransmit(hcard, dwActiveProtocol,
+					[0, self.INS_SEND_REMAINING, 0, 0])
+
+      except Exception as e:
+        return (repr(e), True, None, None)
+
+      if len(chunk) < 2:
+        return ("APDU response too short", False, None, None)
+
+      response = response[:-2] + chunk
+
+    return (None, None, r, response)
+
+
+
+  def _tlv(self, tag, data):
+    """Encapsulate data in a TLV structure
+    """
+
+    l = len(data)
+
+    return [tag] + ([l] if l < 0xff else [0xff, l >> 8, l & 0xff]) + list(data)
+
+
+
+  def _untlv(self, data, raw = False, do_dict = False):
+    """Extract TLV values into a list of [tag, value], or a tag_keyed dictionary
+    if do_dict is asserted.
+    If raw is asserted, the lengths of the TLVs are checked and the values are
+    returned as-is. If not, the values too are checked and processed depending
+    on certain tag types.
+    Returns (None, list or dict) if no error, (errmsg, None) otherwise.
+    """
+
+    ld = {} if do_dict else []
+    errmsg = None
+
+    while data and not errmsg:
+
+      # Check the overall length of the TLV
+      if len(data) < 2 or (data[1] == 0xff and len(data) < 4):
+        errmsg = "TLV too short in APDU response"
+        break
+
+      # Get the tag
+      t = data[0]
+
+      # Get the length of the TLV and remove the tag and length from the data
+      l = data[1]
+
+      if l == 0xff:
+        l = (data[2] << 8) | data[3]
+        data = data[4:]
+
+      else:
+        data = data[2:]
+
+      # Get the value and check that it has the advertised length
+      v = bytes(data[:l])
+
+      if len(v) < l:
+        errmsg = "TLV value too short in APDU response"
+        break
+
+      # Should we check / process the value?
+      if not raw:
+
+        # Check that the value is valid and process it
+        if t == self.NAME_TAG:
+
+          # Check thet the value is a string
+          try:
+            v = v.decode("ascii")
+
+          except:
+            errmsg = "invalid name record {} in APDU".format(v)
+            break
+
+          # Check that the name tag is properly formatted as "issuer:account",
+          # or "account" without issuer
+          m = re.findall("^((.*):)?([^:]*\S)\s*$", v)
+          if m:
+            v = m[0][1:]
+
+          else:
+            errmsg = "malformed name record {} in APDU".format(v)
+            break
+
+
+        elif t == self.TRUNCATED_TAG:
+
+          # Check that the code record isn't empty
+          if not v:
+            errmsg = "empty code record in APDU".format(v)
+            break
+
+          # Check that the code has a valid number of digits
+          if 6 <= v[0] <= 10:
+            v = str((int.from_bytes(v[1:], "big") & 0x7FFFFFFF) % 10 \
+				** v[0]).rjust(v[0], "0")
+
+          else:
+            errmsg = "malformed code record {} in APDU".format(v)
+            break
+
+      # Remove the value from the data
+      data = data[l:]
+
+      # Add the tag and value to our list or dictionary
+      if do_dict:
+        ld[t] = v
+
+      else:
+        ld.append([t, v])
+
+    return (errmsg, None) if errmsg else (None, ld)
+
+
+
+  def get_codes(self):
+    """Try to establish communication with the smartcard, select the OATH AID,
+    validate the OATH password if needed, then get TOTP codes.
+    Returns (None, None, ...) if no error, (errmsg, err_critical_flag, None)
+    otherwise.
+    """
+
+    hcard = None
+
+    errmsg = None
+    errcritical = True
+    oath_codes = []
+
+    disconnect_card = False
+    release_ctx = False
+
+    while True:
+
+      # If we arrive here needing to either disconnect the card or release the
+      # PC/SC resource manager context, do so and break the loop
+      if disconnect_card or release_ctx:
+
+        if disconnect_card:
+          try:
+            sc.SCardDisconnect(hcard, sc.SCARD_UNPOWER_CARD)
+          except:
+            pass
+
+        if release_ctx:
+          try:
+            sc.SCardReleaseContext(self.hcontext)
+          except:
+            pass
+          del(self.hcontext)
+          self.hcontext = None
+
+        break
+
+      # Get the PC/SC resource manager context
+      if not self.hcontext:
+        try:
+          r, self.hcontext = sc.SCardEstablishContext(sc.SCARD_SCOPE_USER)
+
+        except Exception as e:
+          errmsg = "error getting PC/SC resource manager context: {}".format(e)
+          break
+
+        if r != sc.SCARD_S_SUCCESS:
+          release_ctx = True
+          errmsg = "cannot establish PC/SC resource manager context"
+          continue
+
+      # Get the current list of readers
+      try:
+        _, all_readers_new = sc.SCardListReaders(self.hcontext, [])
+
+      except Exception as e:
+        release_ctx = True
+        errmsg = "error getting the list of readers: {}".format(e)
+        continue
+
+      if not all_readers_new:
+        self.all_readers = []
+        errmsg = "no readers"
+        break
+
+      # Get the first reader that matches the regex
+      if all_readers_new != self.all_readers:
+        self.all_readers = all_readers_new
+
+        for r in self.all_readers:
+          if re.match(self.readers_regex, r, re.I):
+            self.reader = r
+            break
+
+        else:
+          self.reader = None
+
+      # Do we have a reader to read from?
+      if self.reader is None:
+        errmsg = "no matching readers"
+        break
+
+      # Connect to the smartcard
+      try:
+        r, hcard, dwActiveProtocol = sc.SCardConnect(self.hcontext,
+							self.reader,
+							sc.SCARD_SHARE_SHARED,
+							sc.SCARD_PROTOCOL_T0 | \
+							sc.SCARD_PROTOCOL_T1)
+
+      except Exception as e:
+        release_ctx = True
+        errmsg = "error connecting to the smartcard: {}".format(e)
+        continue
+
+      if r != sc.SCARD_S_SUCCESS:
+        errmsg = "error connecting to the smartcard"
+        errcritical = False
+        break
+
+      # Whatever happens next, try to disconnect the card before returning
+      disconnect_card = True
+
+      # Select the OATH AID
+      errmsg, ec, r, response = self._send_apdu(hcard, dwActiveProtocol,
+					[0, self.INS_SELECT, self.P1_SELECT,
+					self.P2_SELECT,
+					len(self.oath_aid)] + self.oath_aid)
+
+      if errmsg or r != sc.SCARD_S_SUCCESS:
+        release_ctx = True
+        errmsg = "error transmitting OATH AID selection command{}".format(
+			": {}".format(errmsg) if errmsg else "")
+        errcritical = ec
+        continue
+
+      # Did we get a response error?
+      if response[-2:] != [self.SW1_OK, self.SW2_OK]:
+        errmsg = "error {:02X}{:02X} from OATH AID selection command".format(
+			response[-2], response[-1])
+        errcritical = False
+        continue
+
+      errmsg, tlvs = self._untlv(response[:-2], raw = True, do_dict = True)
+      if errmsg:
+        continue
+
+      # Did we get a name tag?
+      if self.NAME_TAG not in tlvs:
+        errmsg = "Malformed APDU response: missing name tag in " \
+			"AID selection command response"
+        continue
+
+      salt = tlvs[self.NAME_TAG]
+      challenge = tlvs.get(self.CHALLENGE_TAG, None)
+
+      # Do we have a password to validate?
+      if self.oath_pwd:
+
+        # If the token doesn't have a key, throw an error
+        if challenge is None:
+          errmsg = "password set but no password required"
+          continue
+
+        # Calculate our response to the token's challenge
+        key = hashlib.pbkdf2_hmac("sha1", self.oath_pwd.encode("ascii"),
+					salt, 1000, 16)
+        response = hmac.new(key, challenge, "sha1").digest()
+        data_tlv = self._tlv(self.RESPONSE_TAG, response)
+
+        # Calculate our own challenge to the token
+        challenge = [randint(0, 255) for _ in range(8)]
+        data_tlv += self._tlv(self.CHALLENGE_TAG, challenge)
+
+        # Validate the password
+        errmsg, ec, r, response = self._send_apdu(hcard, dwActiveProtocol,
+					[0, self.INS_VALIDATE, 0, 0,
+					len(data_tlv)] + data_tlv)
+
+        if errmsg or r != sc.SCARD_S_SUCCESS:
+          release_ctx = True
+          errmsg = "error transmitting VALIDATE command{}".format(
+			": {}".format(errmsg) if errmsg else "")
+          errcritical = ec
+          continue
+
+        # Did we get a response error?
+        if response[-2:] != [self.SW1_OK, self.SW2_OK]:
+
+          # Did the authentication fail?
+          if response[-2:] == [self.SW1_AUTH_ERROR, self.SW2_AUTH_FAILED] or \
+		response[-2:] == [self.SW1_WRONG_SYNTAX, self.SW2_WRONG_SYNTAX]:
+            errmsg = "authentication failed"
+
+          else:
+            errmsg = "error {:02X}{:02X} from VALIDATE selection command".\
+			format(response[-2], response[-1])
+          continue
+
+        errmsg, tlvs = self._untlv(response[:-2], do_dict = True)
+        if errmsg:
+          continue
+
+        response = tlvs.get(self.RESPONSE_TAG, None)
+
+        # Did the token send a response to our challenge?
+        if response is None:
+          errmsg = "Malformed APDU response: missing response from "\
+			"VALIDATE command response"
+          continue
+
+        # Verify the response
+        verification = hmac.new(key, bytes(challenge), "sha1").digest()
+        if not hmac.compare_digest(response, verification):
+          errmsg = "response from VALIDATE command does not match verification"
+          continue
+
+      else:
+
+        # If the token has a key, throw an error
+        if challenge is not None:
+          errmsg = "password required"
+          continue
+
+      # Request the list of codes
+      challenge = pack(">q", int(time() // self.period))
+      challenge_tlv = self._tlv(self.CHALLENGE_TAG, challenge)
+
+      errmsg, ec, r, response = self._send_apdu(hcard, dwActiveProtocol,
+					[0, self.INS_CALCULATE_ALL, 0,
+					self.P2_CALCULATE_ALL_TRUNCATED,
+					len(challenge_tlv)] + challenge_tlv)
+
+      if errmsg or r != sc.SCARD_S_SUCCESS:
+        release_ctx = True
+        errmsg = "error transmitting CALCULATE_ALL command{}".format(
+			": {}".format(errmsg) if errmsg else "")
+        errcritical = ec
+        continue
+
+      # Did we get a response error?
+      if response[-2:] != [self.SW1_OK, self.SW2_OK]:
+
+        # Is authentication required?
+        if response[-2:] == [self.SW1_AUTH_ERROR, self.SW2_AUTH_REQUIRED]:
+          errmsg = "authentication required"
+
+        else:
+          errmsg = "error {:02X}{:02X} from CALCULATE_ALL command".format(
+			response[-2], response[-1])
+          errcritical = False
+
+        continue
+
+      # Decode the response, which should be a sequence of name and truncated
+      # response TLV pairs
+      errmsg, tlvs = self._untlv(response[:-2], do_dict = False)
+      if errmsg:
+        continue
+
+      if len(tlvs) % 2:
+        errmsg = "Malformed APDU response: odd number of TLVs"
+        continue
+
+      tlv_pairs = [(tlvs[i], tlvs[i + 1]) for i in range(0, len(tlvs), 2)]
+      for p in tlv_pairs:
+
+        if p[0][0] != self.NAME_TAG or p[1][0] != self.TRUNCATED_TAG:
+          errmsg = "Malformed APDU response: unexpected tag"
+          break
+
+        oath_codes.append(p[0][1] + (p[1][1],))
+
+      if errmsg:
+        continue
+
+      # Sort the list of OATH codes by issuer + account
+      oath_codes = sorted(oath_codes, key = lambda e: (e[0] + e[1]).upper())
+
+      # All done
+      break
+
+    return (errmsg, errcritical, oath_codes)
+
+
+
+### routines
 def parse_args(argv, user):
   """Parse the command line arguments
-  Return (errmsg, reader, vkman, cfgfile, wait, user, authunknown), with
+  Return (errmsg, reader, cfgfile, wait, user, authunknown), with
   errmsg being None if the arguments were parsed successfully
   """
 
   reader = default_reader
-  vkman = default_vkman
   wait = default_wait
   cfgfile = default_cfgfile
   authunknown = False
 
   next_arg_is_reader = False
-  next_arg_is_vkman = False
   next_arg_is_wait = False
   next_arg_is_cfgfile = False
   next_arg_is_user = False
@@ -128,9 +605,6 @@ def parse_args(argv, user):
 	"",
 	"       -r <reader> or	Name of the NFC reader to talk to the Vivokey",
 	"       reader=<reader>	Default {}".format(default_reader),
-	"",
-	"       -v <path> or	Path to the vkman utility",
-	"       vkman=<path>	Default {}".format(default_vkman),
 	"",
 	"       -c <path> or	Path to the configuration file",
 	"       cfgfile=<path>	Default {}".format(default_cfgfile),
@@ -151,9 +625,6 @@ def parse_args(argv, user):
     elif arg == "-r":
       next_arg_is_reader = True
 
-    elif arg == "-v":
-      next_arg_is_vkman = True
-
     elif arg == "-c":
       next_arg_is_cfgfile = True
 
@@ -170,10 +641,6 @@ def parse_args(argv, user):
       reader = arg
       next_arg_is_reader = False
 
-    elif next_arg_is_vkman:
-      vkman = arg
-      next_arg_is_vkman = False
-
     elif next_arg_is_cfgfile:
       cfgfile = arg
       next_arg_is_cfgfile = False
@@ -188,9 +655,6 @@ def parse_args(argv, user):
 
     elif arg[:7] == "reader=":
       reader = arg[7:]
-
-    elif arg[:6] == "vkman=":
-      vkman = arg[6:]
 
     elif arg[:8] == "cfgfile=":
       cfgfile = arg[8:]
@@ -207,9 +671,6 @@ def parse_args(argv, user):
   if next_arg_is_reader:
     return ("Error: missing -r value",) + (None,) * 6
 
-  if next_arg_is_vkman:
-    return ("Error: missing -v value",) + (None,) * 6
-
   if next_arg_is_cfgfile:
     return ("Error: missing -c value",) + (None,) * 6
 
@@ -222,10 +683,6 @@ def parse_args(argv, user):
   # Fail if we don't have a reader name
   if not reader:
     return ("Error: no reader name",) + (None,) * 6
-
-  # Fail if we don't have a path to the vkman utility
-  if not vkman:
-    return ("Error: no path to the vkman utility",) + (None,) * 6
 
   # Fail if we don't have a path to the configuration file
   if not cfgfile:
@@ -249,7 +706,7 @@ def parse_args(argv, user):
   if not all([" " <= c <= "~" for c in user]):
     return ("Error: invalid user= value: {}".format(user),) + (None,) * 6
 
-  return (None, reader, vkman, cfgfile, wait, user, authunknown)
+  return (None, reader, cfgfile, wait, user, authunknown)
 
 
 
@@ -329,8 +786,7 @@ def main():
 		os.environ["USER"] if "USER" in os.environ else None
 
   # Parse the command line arguments
-  errmsg, reader, vkman, cfgfile, wait, user, authunknown = parse_args(sys.argv,
-									 user)
+  errmsg, reader, cfgfile, wait, user, authunknown = parse_args(sys.argv, user)
   if errmsg is not None:
     print(errmsg)
     return -1
@@ -368,48 +824,41 @@ def main():
   # Create a TOTP instance
   totp = pyotp.TOTP(b32secret)
 
-  # Repeat until the waiting time to get a read is elapsed
+  # Create a PC/SC oath code reader instance
+  po = pcsc_oath()
+
+  # Set the PC/SC readers regex and the OATH password
+  po.set_readers_regex(reader)
+  po.set_oath_pwd(cfg[user].pwd)
+
+  # Try reading until the waiting time to get a read is elapsed
   start_tstamp = time()
   while time() - start_tstamp < wait:
 
-    # Try to get a code from the user's token
-    cmd = [vkman, "-r", reader, "oath", "accounts", "code"]
-    cmd += ["-p", cfg[user].pwd] if cfg[user].pwd else []
-    cmd += ["-s", cfg[user].acct]
-    try:
-      p = Popen(cmd, stdout = PIPE, stderr = PIPE)
-      stdout_lines = p.communicate()[0].decode("utf8").splitlines()
-      stderr_lines = p.communicate()[1].decode("utf8").splitlines()
-      errcode = p.returncode
+    errmsg, errcritical, iacs = po.get_codes()
 
-    # Did we get an error trying to run the command?
-    except Exception as e:
-      print("NOAUTH: error running vkman: {}".format(e))
-      return 1
+    # Did we get an error mesage?
+    if errmsg:
 
-    # Did the command return an error code?
-    if errcode:
+      # Is it a critical error?
+      if errcritical:
+        print("NOAUTH: {}".format(errmsg))
+        return 1
 
-      # If the command couldn't connect, keep trying
-      if "Failed to connect" in stderr_lines[0]:
-        sleep(.1)
-        continue
+      continue
 
-      # Any other error, we abort
-      print("NOAUTH: error running vkman command{}".
-		format("" if not stderr_lines else ": " + stderr_lines[0]))
-      return 1
+    # Get the code matching the user's registered OATH account in the read list
+    # There must be only one matching account
+    code = None
+    for i, a, c in iacs:
+      if a == cfg[user].acct:
+        if code is not None:
+          print("NOAUTH: more than once matching OATH account {}".format(a))
+          return 1
+        code = c
 
-    # Did the command fail to return anything on stdout?
-    if not stdout_lines:
-      print("NOAUTH: nothing returned by vkman")
-      return 1
-
-    # Did the command return a malformed OTP code?
-    code = stdout_lines[0]
-    if not re.match("^[0-9]{6,10}$", code):
-      print("NOAUTH: vkman returned malformed TOTP code {}".
-		format(code))
+    if code is None:
+      print("NOAUTH: OATH account {} not found".format(cfg[user].acct))
       return 1
 
     # Verify the code
@@ -419,7 +868,7 @@ def main():
 
     else:
       print("NOAUTH: invalid TOTP code")
-      return 0
+      return 1
 
   # If we arrive here, we waited too long for a read
   print("NOAUTH: timeout")

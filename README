@@ -13,25 +13,14 @@ This PAM module uses the Vivokey Manager command line utility.
 Installation
 ------------
 
-1/ Install the Vivokey Manager command line utility. See:
-
-   https://github.com/Giraut/vivokey-manager
-
-   Optionally, you can install Vivokey Manager from a pre-build Debian package:
-
-     - See https://github.com/Giraut/ppa to add the PPA repository to your
-       APT sources
-
-     sudo apt install vivokey-manager
-
-2/ Copy vivokey_pam.py to /usr/bin/vivokey_pam.py
+   Copy vivokey_pam.py to /usr/bin/vivokey_pam.py
 
    Optionally, you can also install this PAM module and configuration utility
    from a pre-build Debian package:
 
      sudo apt install vivokey-pam
 
-3/ Create an empty /etc/users.vivokey file owned by root, readable and writeable
+   Create an empty /etc/users.vivokey file owned by root, readable and writeable
    only by root:
 
      sudo touch /etc/users.vivokey
@@ -51,132 +40,130 @@ Installation
 PAM configuration
 -----------------
 
-  PAM configurations and configuration methods vary from one Linux
-  distribution to the next. The examples below are just guidelines.
+   PAM configurations and configuration methods vary from one Linux
+   distribution to the next. The examples below are just guidelines.
 
-  If your system uses libpam-runtime (i.e. you have a pam-auth-update utility
-  and config files /usr/share/pam-configs), you can configure Vivokey OTP
-  authentication as an alternative login method to the traditional Unix password
-  by adding a /usr/share/pam-config/vivokey-pam.config file with the following
-  content:
+   If your system uses libpam-runtime (i.e. you have a pam-auth-update utility
+   and config files /usr/share/pam-configs), you can configure Vivokey OTP
+   authentication as an alternative login method to the traditional Unix
+   password by adding a /usr/share/pam-config/vivokey-pam.config file
+   with the following content:
 
-  ---8<---8<---8<---
-  Name: Vivokey OTP authentication (1FA: password or Vivokey)
-  Default: no
-  Priority: 128
-  Auth-Type: Primary
-  Auth:
-      [success=end default=ignore]    pam_exec.so quiet /usr/bin/vivokey_pam.py
-  Auth-Initial:
-      [success=end default=ignore]    pam_exec.so quiet /usr/bin/vivokey_pam.py
-  ---8<---8<---8<---
+   ---8<---8<---8<---
+   Name: Vivokey OTP authentication (1FA: password or Vivokey)
+   Default: no
+   Priority: 128
+   Auth-Type: Primary
+   Auth:
+       [success=end default=ignore]   pam_exec.so quiet /usr/bin/vivokey_pam.py
+   Auth-Initial:
+       [success=end default=ignore]   pam_exec.so quiet /usr/bin/vivokey_pam.py
+   ---8<---8<---8<---
 
-  then running pam-auth-update and enabling Vivokey authentication.
+   then running pam-auth-update and enabling Vivokey authentication.
 
-  Then for subsequent logins, you can either type your regular password or
-  present your Vivokey transponder to the reader (within 2 seconds).
+   Then for subsequent logins, you can either type your regular password or
+   present your Vivokey transponder to the reader (within 2 seconds).
 
-  Or, for example, if your system's PAM stack must be configured manually and
-  you want to use Vivokey authentication as a second factor, you could define
-  the following PAM sequence in /etc/pam.d/common-auth (your exact configuration
-  files and sequences may vary depending on your particular system):
+   Or, for example, if your system's PAM stack must be configured manually
+   and you want to use Vivokey authentication as a second factor, you could
+   define the following PAM sequence in /etc/pam.d/common-auth (your exact
+   configuration files and sequences may vary depending on your
+   particular system):
 
-  ---8<---8<---8<---
-  auth [success=1 default=ignore]  pam_unix.so nullok
-  auth requisite                   pam_deny.so
-  auth [success=1 default=ignore]  pam_exec.so quiet /usr/bin/vivokey_pam.py -au
-  auth requisite                   pam_deny.so
-  auth required                    pam_permit.so
-  ---8<---8<---8<---
+   ---8<---8<---8<---
+   auth [success=1 default=ignore] pam_unix.so nullok
+   auth requisite                  pam_deny.so
+   auth [success=1 default=ignore] pam_exec.so quiet /usr/bin/vivokey_pam.py -au
+   auth requisite                  pam_deny.so
+   auth required                   pam_permit.so
+   ---8<---8<---8<---
 
-  In this sequence, if the wrong Unix password is entered, the login fails on
-  the first pam_deny.so.
+   In this sequence, if the wrong Unix password is entered, the login fails on
+   the first pam_deny.so.
 
-  If the correct Unix password is entered, the first pam_deny.so is skipped,
-  then the vivokey_pam.py module waits for a successful read for 2 seconds.
+   If the correct Unix password is entered, the first pam_deny.so is skipped,
+   then the vivokey_pam.py module waits for a successful read for 2 seconds.
 
-  If the Vivokey OTP authentication succeeds, the second pam_deny.so is skipped
-  and the login succeeds. If not, the login fails on the second pam_deny.so.
+   If the Vivokey OTP authentication succeeds, the second pam_deny.so is skipped
+   and the login succeeds. If not, the login fails on the second pam_deny.so.
 
-  In this case, note the use of the -au flag: this tells vivokey_pam.py to let
-  users not listed in the /etc/users.vivokey "through" - instead of denying them
-  authentication by default. Without -au, users who don't have a Vivokey OTP
-  setup could not log in anymore. If it should be desirable that all the users
-  use a Vivokey device to login, all of them should be enrolled in
-  /etc/users.vivokey and the -au should then be dropped.
+   In this case, note the use of the -au flag: this tells vivokey_pam.py to let
+   users not listed in the /etc/users.vivokey "through" - instead of denying
+   them authentication by default. Without -au, users who don't have a Vivokey
+   OTP setup could not log in anymore. If it should be desirable that all the
+   users use a Vivokey device to login, all of them should be enrolled in
+   /etc/users.vivokey and the -au should then be dropped.
 
-  If the wait is not long enough to present the Vivokey device to the reader,
-  use -w <wait> or wait=<wait> as argument to vivokey_py to orverride the
-  default 2-second wait.
+   If the wait is not long enough to present the Vivokey device to the reader,
+   use -w <wait> or wait=<wait> as argument to vivokey_py to orverride the
+   default 2-second wait.
 
-  If the reader isn't recognized, use -r <name> or reader=<name> to specifiy the
-  name matching the reader. The reader's name is passed to vkman.
+   If the reader isn't recognized, use -r <name> or reader=<name> to specifiy
+   the name matching the reader.
 
-  If the vkman executable isn't located in /usr/bin/vkman or the configuration
-  file isn't located in /etc/users.vivokey, use -v <path> / vkman=<path> or
-  -c <path> / cfgfile=<path> to override the default locations for those files.
-
-  When using vivokey_pam.py as a standalone utility, you may use -u <user> or
-  user=<user> to specify another user. By default, the current username is used.
+   When using vivokey_pam.py as a standalone utility, you may use -u <user>
+   or user=<user> to specify another user. By default, the current username
+   is used.
 
 
 
 OATH account setup
 ------------------
 
-  Using vivokey_setup_account.py as root, for a given user, you can:
+   Using vivokey_setup_account.py as root, for a given user, you can:
 
-  1/ Generate the QR code they need to create the account in the
-     Vivokey Authenticator app. See:
+   1/ Generate the QR code they need to create the account in the
+      Vivokey Authenticator app. See:
 
-     https://play.google.com/store/apps/details?id=com.vivokey.vivoauth
+      https://play.google.com/store/apps/details?id=com.vivokey.vivoauth
 
-  2/ Save the account name, OATH password and OATH secret for this user in the
-     Vivokey PAM configuration file at /etc/users.vivokey. Those details are
-     used by the Vivokey PAM module to query the TOTP code for the correct OATH
-     account in the Vivokey device and verify it against the code generated
-     locally using the stored secret
+   2/ Save the account name, OATH password and OATH secret for this user in the
+      Vivokey PAM configuration file at /etc/users.vivokey. Those details are
+      used by the Vivokey PAM module to query the TOTP code for the correct OATH
+      account in the Vivokey device and verify it against the code generated
+      locally using the stored secret
 
-  The QR code may be saved into a PNG image file using -o <file>. This image may
-  then be mailed to the user.
+   The QR code may be saved into a PNG image file using -o <file>. This image
+   may then be mailed to the user.
 
-  However, by default, the QR code is rendered directly on the terminal using
-  ASCII art. For example:
+   However, by default, the QR code is rendered directly on the terminal using
+   ASCII art. For example:
 
-    █████████████████████████████████████████
-    █████████████████████████████████████████
-    ████ ▄▄▄▄▄ █▄█  █  █ █ ▀██▄▄▀█ ▄▄▄▄▄ ████
-    ████ █   █ █▀ ▄▀ █▄█  ▄▄█ ▀ ▄█ █   █ ████
-    ████ █▄▄▄█ █ █  ▄▀▀▀▄██▄▀█▄▀▀█ █▄▄▄█ ████
-    ████▄▄▄▄▄▄▄█ ▀ ▀▄█ █▄▀ ▀ ▀ █ █▄▄▄▄▄▄▄████
-    ████▄▀█▀▄█▄ ▄ ▀▄▄▄▀▄▀ ▀██ █ █▄▄▄▄ ▀▀ ████
-    ████▀█▀▄▀▀▄ ▄█ ▄  ▄▄▀█▄▀ █▀▄ ▄  ▄▄█ █████
-    █████ ▀▀█ ▄ ▄▄  ▄▄▀█▄█▀▀▀▀▄▄ ▀ ▀█▄███████
-    ████▀ ▄ ▀█▄ █  ▀▀   ▀▀▀█▄▀█▄██ ▄▀█▄ ▀████
-    ████▄   ▀ ▄▀   ▀█▀▄█▀▄█▄▀█▄▀▄ ▄▀▄█ ▀▀████
-    ██████▄█ █▄█▄█▀▄▀ █ █ ▀█  ▄ ▀▀▀▄ ▄█▄█████
-    ████▀ █ ▀▀▄█▀  ▄█▀▄▄▀█▄ ▄▀▀▀▀█ ▄▄██ █████
-    ██████▀█▀▄▄▀█  ▄▄ ██▄▀█ ▀▀▀     ███ ▀████
-    ████▄▄█▄▄▄▄█ ▄█  █▄ ▄ ▀█▄ ▄▀ ▄▄▄ █  ▀████
-    ████ ▄▄▄▄▄ █▄▀ ▄▄ ▄ ▄█▄▀▀█▀█ █▄█ ██ █████
-    ████ █   █ █▄█▄ ▄▄▀█▄█▀▀▀▀▄▀▄     ▀ ▄████
-    ████ █▄▄▄█ ██▄█▀█▀█ ▀  █▄▀█▀▄█ █ ████████
-    ████▄▄▄▄▄▄▄█▄▄██▄▄▄█▄▄█▄▄▄▄▄▄▄▄▄██▄█▄████
-    █████████████████████████████████████████
+     █████████████████████████████████████████
+     █████████████████████████████████████████
+     ████ ▄▄▄▄▄ █▄█  █  █ █ ▀██▄▄▀█ ▄▄▄▄▄ ████
+     ████ █   █ █▀ ▄▀ █▄█  ▄▄█ ▀ ▄█ █   █ ████
+     ████ █▄▄▄█ █ █  ▄▀▀▀▄██▄▀█▄▀▀█ █▄▄▄█ ████
+     ████▄▄▄▄▄▄▄█ ▀ ▀▄█ █▄▀ ▀ ▀ █ █▄▄▄▄▄▄▄████
+     ████▄▀█▀▄█▄ ▄ ▀▄▄▄▀▄▀ ▀██ █ █▄▄▄▄ ▀▀ ████
+     ████▀█▀▄▀▀▄ ▄█ ▄  ▄▄▀█▄▀ █▀▄ ▄  ▄▄█ █████
+     █████ ▀▀█ ▄ ▄▄  ▄▄▀█▄█▀▀▀▀▄▄ ▀ ▀█▄███████
+     ████▀ ▄ ▀█▄ █  ▀▀   ▀▀▀█▄▀█▄██ ▄▀█▄ ▀████
+     ████▄   ▀ ▄▀   ▀█▀▄█▀▄█▄▀█▄▀▄ ▄▀▄█ ▀▀████
+     ██████▄█ █▄█▄█▀▄▀ █ █ ▀█  ▄ ▀▀▀▄ ▄█▄█████
+     ████▀ █ ▀▀▄█▀  ▄█▀▄▄▀█▄ ▄▀▀▀▀█ ▄▄██ █████
+     ██████▀█▀▄▄▀█  ▄▄ ██▄▀█ ▀▀▀     ███ ▀████
+     ████▄▄█▄▄▄▄█ ▄█  █▄ ▄ ▀█▄ ▄▀ ▄▄▄ █  ▀████
+     ████ ▄▄▄▄▄ █▄▀ ▄▄ ▄ ▄█▄▀▀█▀█ █▄█ ██ █████
+     ████ █   █ █▄█▄ ▄▄▀█▄█▀▀▀▀▄▀▄     ▀ ▄████
+     ████ █▄▄▄█ ██▄█▀█▀█ ▀  █▄▀█▀▄█ █ ████████
+     ████▄▄▄▄▄▄▄█▄▄██▄▄▄█▄▄█▄▄▄▄▄▄▄▄▄██▄█▄████
+     █████████████████████████████████████████
 
-  This is convenient if the user is around while doing the setup - particularly
-  since they'll have to type in their OATH password if they have one set up in
-  their Vivokey device.
+   This is convenient if the user is around while doing the setup - particularly
+   since they'll have to type in their OATH password if they have one set up in
+   their Vivokey device.
 
-  But more importantly, it avoids saving the secret to a file and mailing it,
-  and having to ask the user to carefully delete the image file and email after
-  they're done setting up the account in the Vivokey Authenticator app.
+   But more importantly, it avoids saving the secret to a file and mailing it,
+   and having to ask the user to carefully delete the image file and email after
+   they're done setting up the account in the Vivokey Authenticator app.
 
-  By default, the account name is <username>@<hostname>. However, this may be
-  overridden and set to anything using -a <name>. Care should be taken that the
-  account name be unique in the Vivokey device, as the PAM module relies on
-  it to be uniquely distinguishable from all other OATH accounts stored on
-  the device.
+   By default, the account name is <username>@<hostname>. However, this may be
+   overridden and set to anything using -a <name>. Care should be taken that the
+   account name be unique in the Vivokey device, as the PAM module relies on
+   it to be uniquely distinguishable from all other OATH accounts stored on
+   the device.
 
 
 
