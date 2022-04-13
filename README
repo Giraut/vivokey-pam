@@ -120,9 +120,9 @@ OATH account setup
 
    2/ Save the account name, OATH password and OATH secret for this user in the
       Vivokey PAM configuration file at /etc/users.vivokey. Those details are
-      used by the Vivokey PAM module to query the TOTP code for the correct OATH
-      account in the Vivokey device and verify it against the code generated
-      locally using the stored secret
+      used by the Vivokey PAM module to query the cryptographic hash for the
+      correct OATH account in the Vivokey device and verify it against the hash
+      calculated locally using the stored secret
 
    The QR code may be saved into a PNG image file using -o <file>. This image
    may then be mailed to the user.

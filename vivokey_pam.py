@@ -74,14 +74,10 @@ import re
 import os
 import sys
 import hmac
-import pyotp
 import hashlib
-from struct import pack
 from random import randint
 from time import time, sleep
-from base64 import b32encode
 import smartcard.scard as sc
-from subprocess import Popen, PIPE
 
 
 
@@ -102,8 +98,8 @@ class oathcfg:
 
 ### Classes
 class pcsc_oath():
-  """Class to get the list of TOTP codes from an OATH applet running on an
-  ISO14443-4 smartcard using PC/SC
+  """Class to get a full SHA hash for a given account from an OATH applet
+  running on an ISO14443-4 smartcard using PC/SC
   """
 
   # Defines
@@ -116,8 +112,8 @@ class pcsc_oath():
 
   INS_VALIDATE = 0xa3
 
-  INS_CALCULATE_ALL = 0xa4
-  P2_CALCULATE_ALL_TRUNCATED = 0x01
+  INS_CALCULATE = 0xa2
+  P2_CALCULATE_FULL = 0x00
 
   INS_SEND_REMAINING = 0xa5
 
@@ -128,6 +124,9 @@ class pcsc_oath():
   SW2_AUTH_REQUIRED = 0x82
   SW2_AUTH_FAILED = 0x84
 
+  SW1_FAILED = 0x69
+  SW2_NO_SUCH_OBJECT = 0x84
+
   SW1_WRONG_SYNTAX = 0x6a
   SW2_WRONG_SYNTAX = 0x80
 
@@ -136,7 +135,7 @@ class pcsc_oath():
   NAME_TAG = 0x71
   CHALLENGE_TAG = 0x74
   RESPONSE_TAG = 0x75
-  TRUNCATED_TAG = 0x76
+  FULL_TAG = 0x75
 
 
 
@@ -168,7 +167,7 @@ class pcsc_oath():
 
 
   def set_oath_pwd(self, oath_pwd):
-    """Set the OATH password to use at the next get_code()
+    """Set the OATH password to use at the next get_hash()
     """
 
     self.oath_pwd = oath_pwd
@@ -218,7 +217,7 @@ class pcsc_oath():
 
 
 
-  def _untlv(self, data, raw = False, do_dict = False):
+  def _untlv(self, data, do_dict = False):
     """Extract TLV values into a list of [tag, value], or a tag_keyed dictionary
     if do_dict is asserted.
     If raw is asserted, the lengths of the TLVs are checked and the values are
@@ -257,47 +256,6 @@ class pcsc_oath():
         errmsg = "TLV value too short in APDU response"
         break
 
-      # Should we check / process the value?
-      if not raw:
-
-        # Check that the value is valid and process it
-        if t == self.NAME_TAG:
-
-          # Check thet the value is a string
-          try:
-            v = v.decode("ascii")
-
-          except:
-            errmsg = "invalid name record {} in APDU".format(v)
-            break
-
-          # Check that the name tag is properly formatted as "issuer:account",
-          # or "account" without issuer
-          m = re.findall("^((.*):)?([^:]*\S)\s*$", v)
-          if m:
-            v = m[0][1:]
-
-          else:
-            errmsg = "malformed name record {} in APDU".format(v)
-            break
-
-
-        elif t == self.TRUNCATED_TAG:
-
-          # Check that the code record isn't empty
-          if not v:
-            errmsg = "empty code record in APDU".format(v)
-            break
-
-          # Check that the code has a valid number of digits
-          if 6 <= v[0] <= 10:
-            v = str((int.from_bytes(v[1:], "big") & 0x7FFFFFFF) % 10 \
-				** v[0]).rjust(v[0], "0")
-
-          else:
-            errmsg = "malformed code record {} in APDU".format(v)
-            break
-
       # Remove the value from the data
       data = data[l:]
 
@@ -312,18 +270,19 @@ class pcsc_oath():
 
 
 
-  def get_codes(self):
+  def get_hash(self, acct, challenge):
     """Try to establish communication with the smartcard, select the OATH AID,
-    validate the OATH password if needed, then get TOTP codes.
-    Returns (None, None, ...) if no error, (errmsg, err_critical_flag, None)
-    otherwise.
+    validate the OATH password if needed, then ask the token to calculate the
+    full hash for the account acct.
+    Returns (None, None, token hash) if no error, (errmsg, err_critical_flag,
+    None) otherwise.
     """
 
     hcard = None
 
     errmsg = None
     errcritical = True
-    oath_codes = []
+    thash = None
 
     disconnect_card = False
     release_ctx = False
@@ -436,7 +395,7 @@ class pcsc_oath():
         errcritical = False
         continue
 
-      errmsg, tlvs = self._untlv(response[:-2], raw = True, do_dict = True)
+      errmsg, tlvs = self._untlv(response[:-2], do_dict = True)
       if errmsg:
         continue
 
@@ -447,25 +406,25 @@ class pcsc_oath():
         continue
 
       salt = tlvs[self.NAME_TAG]
-      challenge = tlvs.get(self.CHALLENGE_TAG, None)
+      chal = tlvs.get(self.CHALLENGE_TAG, None)
 
       # Do we have a password to validate?
       if self.oath_pwd:
 
         # If the token doesn't have a key, throw an error
-        if challenge is None:
+        if chal is None:
           errmsg = "password set but no password required"
           continue
 
         # Calculate our response to the token's challenge
         key = hashlib.pbkdf2_hmac("sha1", self.oath_pwd.encode("ascii"),
 					salt, 1000, 16)
-        response = hmac.new(key, challenge, "sha1").digest()
+        response = hmac.new(key, chal, "sha1").digest()
         data_tlv = self._tlv(self.RESPONSE_TAG, response)
 
         # Calculate our own challenge to the token
-        challenge = [randint(0, 255) for _ in range(8)]
-        data_tlv += self._tlv(self.CHALLENGE_TAG, challenge)
+        chal = [randint(0, 255) for _ in range(8)]
+        data_tlv += self._tlv(self.CHALLENGE_TAG, chal)
 
         # Validate the password
         errmsg, ec, r, response = self._send_apdu(hcard, dwActiveProtocol,
@@ -505,7 +464,7 @@ class pcsc_oath():
           continue
 
         # Verify the response
-        verification = hmac.new(key, bytes(challenge), "sha1").digest()
+        verification = hmac.new(key, bytes(chal), "sha1").digest()
         if not hmac.compare_digest(response, verification):
           errmsg = "response from VALIDATE command does not match verification"
           continue
@@ -513,22 +472,22 @@ class pcsc_oath():
       else:
 
         # If the token has a key, throw an error
-        if challenge is not None:
+        if chal is not None:
           errmsg = "password required"
           continue
 
-      # Request the list of codes
-      challenge = pack(">q", int(time() // self.period))
+      # Request the full hash for the given account name
       challenge_tlv = self._tlv(self.CHALLENGE_TAG, challenge)
-
+      acct_tlv = self._tlv(self.NAME_TAG, (acct).encode("ascii"))
       errmsg, ec, r, response = self._send_apdu(hcard, dwActiveProtocol,
-					[0, self.INS_CALCULATE_ALL, 0,
-					self.P2_CALCULATE_ALL_TRUNCATED,
-					len(challenge_tlv)] + challenge_tlv)
+					[0, self.INS_CALCULATE, 0,
+					self.P2_CALCULATE_FULL,
+					len(acct_tlv) + len(challenge_tlv)] + \
+					acct_tlv + challenge_tlv)
 
       if errmsg or r != sc.SCARD_S_SUCCESS:
         release_ctx = True
-        errmsg = "error transmitting CALCULATE_ALL command{}".format(
+        errmsg = "error transmitting CALCULATE command{}".format(
 			": {}".format(errmsg) if errmsg else "")
         errcritical = ec
         continue
@@ -540,42 +499,40 @@ class pcsc_oath():
         if response[-2:] == [self.SW1_AUTH_ERROR, self.SW2_AUTH_REQUIRED]:
           errmsg = "authentication required"
 
+        elif response[-2:] == [self.SW1_FAILED, self.SW2_NO_SUCH_OBJECT]:
+          errmsg = "account not found"
+
         else:
-          errmsg = "error {:02X}{:02X} from CALCULATE_ALL command".format(
+          errmsg = "error {:02X}{:02X} from CALCULATE command".format(
 			response[-2], response[-1])
           errcritical = False
 
         continue
 
-      # Decode the response, which should be a sequence of name and truncated
-      # response TLV pairs
+      # Decode the response, which should be a full code response TLV
       errmsg, tlvs = self._untlv(response[:-2], do_dict = False)
       if errmsg:
         continue
 
-      if len(tlvs) % 2:
-        errmsg = "Malformed APDU response: odd number of TLVs"
-        continue
+      if len(tlvs) != 1:
+        errmsg = "Malformed APDU response: expected 1 TLV, got {}".\
+			format(len(tlvs_st))
+        break
 
-      tlv_pairs = [(tlvs[i], tlvs[i + 1]) for i in range(0, len(tlvs), 2)]
-      for p in tlv_pairs:
+      if tlvs[0][0] != self.FULL_TAG:
+        errmsg = "Malformed APDU response: unexpected tag"
+        break
 
-        if p[0][0] != self.NAME_TAG or p[1][0] != self.TRUNCATED_TAG:
-          errmsg = "Malformed APDU response: unexpected tag"
-          break
+      thash = tlvs[0][1][1:]
 
-        oath_codes.append(p[0][1] + (p[1][1],))
-
-      if errmsg:
-        continue
-
-      # Sort the list of OATH codes by issuer + account
-      oath_codes = sorted(oath_codes, key = lambda e: (e[0] + e[1]).upper())
+      if len(thash) not in (20, 32, 64):
+        errmsg = "invalid hash size {}".format(len(thash))
+        break
 
       # All done
       break
 
-    return (errmsg, errcritical, oath_codes)
+    return (errmsg, errcritical, thash)
 
 
 
@@ -821,18 +778,15 @@ def main():
       retcode = 1
       continue
 
-    # If the user's secret is invalid or otherwise non-convertible into a base32
-    # string, we can't authenticate them
+    # If the user's secret is invalid or otherwise non-convertible into bytes,
+    # we can't authenticate them
     try:
-      b32secret = b32encode(bytes.fromhex(cfg[user].secret))
+      key = bytes.fromhex(cfg[user].secret)
 
     except:
       print("NOAUTH: {} has an invalid OATH secret".format(user))
       retcode = 1
       continue
-
-    # Create a TOTP instance
-    totp = pyotp.TOTP(b32secret)
 
     # Create a PC/SC oath code reader instance
     po = pcsc_oath()
@@ -841,10 +795,13 @@ def main():
     po.set_readers_regex(reader)
     po.set_oath_pwd(cfg[user].pwd)
 
+    # Generate a challenge for the token
+    challenge = bytes([randint(0, 255) for _ in range(8)])
+
     # Try reading until the waiting time to get a read is elapsed
     while retcode is None and time() - start_tstamp < wait:
 
-      errmsg, errcritical, iacs = po.get_codes()
+      errmsg, errcritical, thash = po.get_hash(cfg[user].acct, challenge)
 
       # Did we get an error mesage?
       if errmsg:
@@ -856,34 +813,42 @@ def main():
 
         continue
 
-      # Get the code matching the user's registered OATH account in the read
-      # list There must be only one matching account
-      code = None
-      for i, a, c in iacs:
-        if a == cfg[user].acct:
+      # Recalculate the hash ourselves
+      if len(key) > 64:
+        key = hashlib.sha1(key).digest()
+      key = key + b"\x00" * (64 - len(key))
 
-          if code is not None:
-            print("NOAUTH: more than once matching OATH account {}".format(a))
-            retcode = 1
-            continue
+      hashlen = len(thash)
 
-          code = c
+      if hashlen == 20:		# The token returned a SHA1 hash
+        inner = hashlib.sha1()
+        outer = hashlib.sha1()
 
-      if code is None:
-        print("NOAUTH: OATH account {} not found".format(cfg[user].acct))
-        retcode = 1
-        continue
+      elif hashlen == 32:	# The token returned a SHA256 hash
+        inner = hashlib.sha256()
+        outer = hashlib.sha256()
 
-      # Verify the code
-      if totp.verify(code):
+      elif hashlen == 64:	# The token returned a SHA512 hash
+        inner = hashlib.sha512()
+        outer = hashlib.sha512()
+
+      inner.update(key.translate(bytes([b ^ 0x36 for b in range(256)])))
+      outer.update(key.translate(bytes([b ^ 0x5c for b in range(256)])))
+
+      inner.update(challenge)
+      outer.update(inner.digest())
+      verification = outer.digest()
+
+      # Check that our hash matches the token's
+      if thash == verification:
         print("AUTHOK")
         retcode = 0
-        continue
 
       else:
-        print("NOAUTH: invalid TOTP code")
+        print("NOAUTH: hash mismatch")
         retcode = 1
-        continue
+
+      continue
 
     if retcode is not None:
       continue
