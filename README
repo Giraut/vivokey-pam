@@ -167,6 +167,17 @@ OATH account setup
 
 
 
+Use with cryptsetup
+-------------------
+
+   When used as a standalone utility with the "gethash" command, vivokey_pam.py
+   may also be used with cryptsetup to unlock LUKS volumes with a Vivokey OTP
+   token.
+
+   See README.cryptsetup for details.
+
+
+
            ---------------------------------------------------------
                    Bug reports? Questions? You can email me.
                    Run this command to get my email address:

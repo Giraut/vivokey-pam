@@ -3,9 +3,21 @@
 Vivokey OTP applet.
 
 This module is meant to be called by the pam_exec.so module to provide an
-optional or a second authentication factor in the PAM stack. However, it may
-also be called manually as a standalone utility to troubleshoot a problem or
-validate whether a user's OTP setup is correct.
+optional or a second authentication factor in the PAM stack.
+
+However, it may also be used as a standalone utility: with the same arguments
+as used in the PAM setup, it will behave exactly as it would when called by
+pam_exec, and therefore may be used to troubleshoot a problem or validate
+whether a user's OTP setup is correct.
+
+When used with the "gethash" command, the utility doesn't perform any validation
+but rather asks the token to calculate a hash from a user-supplied challenge.
+The challenge is read on stdin has a 8- to 64-byte ASCII-encoded hex number,
+and the hash is returned as a 20-, 32- or 64-byte ASCII-encoded hex number on
+stdout.
+
+PAM configuration
+-----------------
 
 For example, if your system uses libpam-runtime (i.e. you have a pam-auth-update
 utility and config files /usr/share/pam-configs), you can configure Vivokey OTP
@@ -543,10 +555,13 @@ def parse_args(argv, user):
   errmsg being None if the arguments were parsed successfully
   """
 
+  noargs = (None,) * 6
+
   reader = default_reader
   wait = default_wait
   cfgfile = default_cfgfile
   authunknown = False
+  gethash = False
 
   next_arg_is_reader = False
   next_arg_is_wait = False
@@ -560,24 +575,35 @@ def parse_args(argv, user):
 	"",
 	"Usage: {}".format(argv[0]),
 	"",
-	"       -r <reader> or	Name of the NFC reader to talk to the Vivokey",
-	"       reader=<reader>	Default {}".format(default_reader),
+	"       -r <reader> or   Name of the NFC reader to talk to the Vivokey",
+	"       reader=<reader>  Default {}".format(default_reader),
 	"",
-	"       -c <path> or	Path to the configuration file",
-	"       cfgfile=<path>	Default {}".format(default_cfgfile),
+	"       -c <path> or     Path to the configuration file",
+	"       cfgfile=<path>   Default {}".format(default_cfgfile),
 	"",
-	"       -w <wait> or	Delay (s) to wait for a read",
-	"       waitr=<wait>	Default {}".format(default_wait),
+	"       -w <wait> or     Delay (s) to wait for a read",
+	"       waitr=<wait>     Default {}".format(default_wait),
 	"",
-	"       -u <user> or	Username to override the PAM_USER environment",
-	"       user=<user>	variable",
+	"       -u <user> or     Username to override the PAM_USER environment",
+	"       user=<user>      variable",
 	"",
-	"       -au		Authenticate users who are not listed in the",
-	"			configuration file",
-	"			Default: deny authentication to unknown users",
+	"       -au              Authenticate users who are not listed in the",
+	"                        configuration file",
+	"                        Default: deny authentication to unknown users",
 	"",
-	"       -h or --help	This help",
-	""]),) + (None,) * 5
+	"       gethash          Read an ASCII-encoded hex value or a UUID on",
+	"                        stdin and ask the token to calculate a hash",
+	"                        using the user's registered account.",
+	"                        Return the hash as an ASCII-encoded hex value",
+	"                        on stdout.",
+	"",
+	"                        This function is not PAM-related. It is used",
+	"                        to test the token's hashing algorithm, and",
+	"                        may also be used with other utilities like",
+	"                        cryptsetup to use hashes as passphrases.",
+	"",
+	"       -h or --help     This help",
+	""]),) + noargs
 
     elif arg == "-r":
       next_arg_is_reader = True
@@ -622,48 +648,55 @@ def parse_args(argv, user):
     elif arg[:5] == "user=":
       user = arg[5:]
 
+    elif arg == "gethash":
+      gethash = True
+
     else:
-      return ("Error: unknown argument: {}".format(arg),) + (None,) * 5
+      return ("Error: unknown argument: {}".format(arg),) + noargs
 
   if next_arg_is_reader:
-    return ("Error: missing -r value",) + (None,) * 5
+    return ("Error: missing -r value",) + noargs
 
   if next_arg_is_cfgfile:
-    return ("Error: missing -c value",) + (None,) * 5
+    return ("Error: missing -c value",) + noargs
 
   if next_arg_is_wait:
-    return ("Error: missing -w value",) + (None,) * 5
+    return ("Error: missing -w value",) + noargs
 
   if next_arg_is_user:
-    return ("Error: missing -u value",) + (None,) * 5
+    return ("Error: missing -u value",) + noargs
 
   # Fail if we don't have a reader name
   if not reader:
-    return ("Error: no reader name",) + (None,) * 5
+    return ("Error: no reader name",) + noargs
 
   # Fail if we don't have a path to the configuration file
   if not cfgfile:
-    return ("Error: no path to the configuration file",) + (None,) * 5
+    return ("Error: no path to the configuration file",) + noargs
 
   # Fail if we don't have a wait time
   if not wait:
-    return ("Error: no wait time",) + (None,) * 5
+    return ("Error: no wait time",) + noargs
 
   # Fail if the wait time is invalid
   try:
     wait = float(wait)
   except:
-    return ("Error: invalid wait time {}".format(wait),) + (None,) * 5
+    return ("Error: invalid wait time {}".format(wait),) + noargs
 
   # Fail if we don't have a user to authenticate
   if not user:
-    return ("Error: no username to authenticate",) + (None,) * 5
+    return ("Error: no username to authenticate",) + noargs
 
   # Check that the username is valid
   if not all([" " <= c <= "~" for c in user]):
-    return ("Error: invalid user {}".format(user),) + (None,) * 5
+    return ("Error: invalid user {}".format(user),) + noargs
 
-  return (None, reader, cfgfile, wait, user, authunknown)
+  # -au isn't valid with gethash are mutually exclusive
+  if gethash and authunknown:
+    return ("-au not valid with gethash",) + noargs
+
+  return (None, reader, cfgfile, wait, user, authunknown, gethash)
 
 
 
@@ -736,6 +769,9 @@ def main():
   """Main routine
   """
 
+  autherr = False
+  errmsg = None
+
   # Get the PAM_USER environment variable. If we don't have it, we're
   # not being called by pam_exec.so, so get the USER environment variable
   # instead
@@ -743,49 +779,77 @@ def main():
 		os.environ["USER"] if "USER" in os.environ else None
 
   # Parse the command line arguments
-  errmsg, reader, cfgfile, wait, user, authunknown = parse_args(sys.argv, user)
-  if errmsg is not None:
-    print(errmsg)
-    return -1
+  errmsg, reader, cfgfile, wait, user, authunknown, gethash = \
+		parse_args(sys.argv, user)
 
   # Parse the configuration file
-  errmsg, cfg = parse_cfgfile(cfgfile)
-  if errmsg is not None:
-    print(errmsg)
-    return -1
+  if errmsg is None:
+    errmsg, cfg = parse_cfgfile(cfgfile)
 
-  start_tstamp = time()
-  retcode = None
+  # If we do the gethash command, get the challenge as space or hyphen-separated
+  # ASCII-encoded 8-bit hex values. Otherwise, generate a challenge ourselves.
+  if errmsg is None:
 
-  while retcode is None:
+    if gethash:
+      try:
+        instr = input()
+
+        try:
+          challenge = bytes.fromhex(instr.replace("-", " "))
+
+          if len(challenge) < 8:
+            errmsg = "challenge too short - minimum 8 bytes"
+
+          elif len(challenge) > 64:
+            errmsg = "challenge too long - maximum 64 bytes"
+
+        except:
+          errmsg = "invalid hex value: {}".format(instr)
+
+      except Exception as e:
+        errmsg = "input error: {}".format(e)
+
+    else:
+      challenge = bytes([randint(0, 255) for _ in range(8)])
+
+  if errmsg is None:
+    autherr = True
+    start_tstamp = time()
+
+  while errmsg is None:
 
     # If the user isn't registered in the configuration file, deny them
     # authentication by default, unless we were asked to authenticated them
     if user not in cfg:
-      print("AUTHOK" if authunknown else "NOAUTH: {} is unknown".format(user))
-      retcode = 0 if authunknown else 1
+      errmsg = "" if authunknown else "{} is unknown".format(user)
       continue
 
-    # If the user doesn't have an account or a secret, we can't
-    # authenticated them
+    # If the user doesn't have an account or a secret, we can't do anything
     if not cfg[user].acct:
-      print("NOAUTH: {} has no OATH account".format(user))
-      retcode = 1
+      errmsg = "{} has no OATH account".format(user)
       continue
 
-    if not cfg[user].secret:
-      print("NOAUTH: {} has no OATH secret".format(user))
-      retcode = 1
-      continue
+    # Does the user have a secret?
+    if cfg[user].secret:
 
-    # If the user's secret is invalid or otherwise non-convertible into bytes,
-    # we can't authenticate them
-    try:
-      key = bytes.fromhex(cfg[user].secret)
+      # If we do the gethash command, refuse to run
+      if gethash:
+        errmsg = "{} may not have a recorded OATH secret to get hashes".\
+			format(user)
+        continue
 
-    except:
-      print("NOAUTH: {} has an invalid OATH secret".format(user))
-      retcode = 1
+      # If the user's secret is invalid or otherwise non-convertible into bytes,
+      # we can't authenticate them
+      try:
+        key = bytes.fromhex(cfg[user].secret)
+
+      except:
+        errmsg = "{} has an invalid OATH secret".format(user)
+        continue
+
+    # If the user doesn't have a secret, we can't authenticate them
+    elif not gethash:
+      errmsg = "{} has no OATH secret".format(user)
       continue
 
     # Create a PC/SC oath code reader instance
@@ -795,22 +859,24 @@ def main():
     po.set_readers_regex(reader)
     po.set_oath_pwd(cfg[user].pwd)
 
-    # Generate a challenge for the token
-    challenge = bytes([randint(0, 255) for _ in range(8)])
-
     # Try reading until the waiting time to get a read is elapsed
-    while retcode is None and time() - start_tstamp < wait:
+    while errmsg is None and time() - start_tstamp < wait:
 
-      errmsg, errcritical, thash = po.get_hash(cfg[user].acct, challenge)
+      em, errcritical, thash = po.get_hash(cfg[user].acct, challenge)
 
       # Did we get an error mesage?
-      if errmsg:
+      if em:
 
         # Is it a critical error?
         if errcritical:
-          print("NOAUTH: {}".format(errmsg))
-          retcode = 1
+          errmsg = em
 
+        continue
+
+      # If we do the gethash command, print the hash and stop
+      if gethash:
+        print("".join([format(b, "02X") for b in thash]), end = "")
+        errmsg = ""
         continue
 
       # Recalculate the hash ourselves
@@ -841,29 +907,36 @@ def main():
 
       # Check that our hash matches the token's
       if thash == verification:
-        print("AUTHOK")
-        retcode = 0
+        errmsg = ""
 
       else:
-        print("NOAUTH: hash mismatch")
-        retcode = 1
+        errmsg = "hash mismatch"
 
       continue
 
-    if retcode is not None:
+    if errmsg is not None:
       continue
 
     # If we arrive here, we waited too long for a read
-    print("NOAUTH: timeout")
-    retcode = 1
+    errmsg = "timeout"
 
-  # If we arrive here with a non-zero return code (i.e. failed authentication)
-  # continue waiting until the end of the wait time to throttle repeated login
-  # attempts and avoid giving clues to the cause of the failed authentication
-  if retcode:
+  # If we do the gethash command, print any error message on stderr and stop
+  if gethash:
+    if errmsg:
+      print("Error: " + errmsg, file = sys.stderr)
+
+    return -1 if errmsg else 0
+
+  # If we arrive here with a failed authentication, continue waiting until the
+  # end of the wait time to throttle repeated login attempts and avoid giving
+  # clues to the cause of the failed authentication
+  if autherr and errmsg:
     sleep(max(0, wait - time() + start_tstamp))
 
-  return retcode
+  # Output the error message
+  print((("NOAUTH: " if autherr else "") + errmsg) if errmsg else "AUTHOK")
+
+  return 0 if not errmsg else 1 if autherr else -1
 
 
 

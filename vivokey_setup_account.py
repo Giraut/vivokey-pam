@@ -215,10 +215,20 @@ if __name__ == "__main__":
   # Prompt for the OATH password
   password = getpass("OATH password (leave blank for none): ")
 
+  # Ask whether the secret should be saved (needed for PAM authentication,
+  # forbidden to get hashes
+  print("Save the secret? Hint: the secret must be saved to use the account " \
+	"for PAM authentication but must not be saved to use it to get " \
+	"hashes) [Y/N]? ", end = "")
+
+  if input().upper() == "N":
+    secret = None
+
   # Ask confirmation to save this new user account configuration into the
   # configuration file
-  print("Save account {} for user {} into {} [Y/N]? ".
-	format(account, args.user, args.cfgfile), end = "")
+  print("Save account {} for user {} into {} {}[Y/N]? ".
+	format(account, args.user, args.cfgfile,
+		"WITHOUT SECRET " if secret is None else ""), end = "")
 
   if input().upper() != "Y":
     print("Aborted")
@@ -238,7 +248,8 @@ if __name__ == "__main__":
   lines = [l for l in lines if not l.lstrip().startswith(args.user)]
 
   # Add the new configuration line
-  hexsecret = "".join([format(v, "02x") for v in secret])
+  hexsecret = "-" if secret is None else \
+		"".join([format(v, "02x") for v in secret])
   lines.append("{} {} {} {}".format(args.user, account,
 				password if password else "-", hexsecret))
 
