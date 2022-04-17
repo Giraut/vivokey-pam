@@ -14,8 +14,9 @@ purpose of unlocking encrypted volumes with an OTP account stored on a Vivokey
 token. But it may be used for other purposes that required token-calculated
 SHA hashes.
 
-The challenge must be supplied to the tool's stdin as an ASCII-encoded 8- to 64-
-byte hex number that may optionally be separated by spaces or hyphens.
+The challenge must be supplied to the tool's stdin as an ASCII-encoded hex
+number up to 64 bytes long that may be separated by spaces or hyphens.
+For instance: 00112233, 4b81dbf0-01 or 4508e4d8-f206-4722-940c-75c47f7b4b28.
 
 The SHA hash calculated by the token from this challenge is printed out on
 stdout without a trailing linefeed as an ASCII-encoded 20-, 32- or 64-byte hex
