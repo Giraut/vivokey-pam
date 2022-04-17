@@ -797,8 +797,12 @@ def main():
         try:
           challenge = bytes.fromhex(instr.replace("-", " "))
 
-          if len(challenge) < 8:
-            errmsg = "challenge too short - minimum 8 bytes"
+          if not challenge:
+            errmsg = "no challenge"
+
+          # If the challenge is too short, pad it with zeros
+          elif len(challenge) < 8:
+            challenge = (b"\x00" * 8 + challenge)[-8:]
 
           elif len(challenge) > 64:
             errmsg = "challenge too long - maximum 64 bytes"
