@@ -1,6 +1,6 @@
                                   Vivokey PAM
                                   -----------
-                                    v0.4.1
+                                    v0.4.2
 
 
 PAM module and configuration utility to perform user authentication (1FA or 2FA)
