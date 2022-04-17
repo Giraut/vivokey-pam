@@ -93,7 +93,7 @@ Usage example #1: setting up and using a LUKS encrypted disk image
 
 
 
-Usage example #2: setting up and using a plain dm-crypt-encrypted partition
+Usage example #2: setting up and using a plain dm-crypt encrypted partition
 ---------------------------------------------------------------------------
 
    In the following example, the disk partition is /dev/sde5
