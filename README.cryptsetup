@@ -73,7 +73,7 @@ Usage example #1: setting up and using a LUKS encrypted disk image
 
    4/ Create the filesystem onto the LUKS volume:
 
-      mkfs.ext4 /dev/mapper/mpr 
+      mkfs.ext4 /dev/mapper/mpr
 
    5/ Mount and use the filesystem
 
