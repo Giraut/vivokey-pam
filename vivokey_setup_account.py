@@ -38,7 +38,6 @@ the device.
 ### Modules
 import re
 import os
-import sys
 import qrcode
 import argparse
 import numpy as np
@@ -52,6 +51,7 @@ from base64 import b32encode
 default_cfgfile = "/etc/users.vivokey"
 default_qrcode_out = "-"
 nb_secret_digits = 10
+cfgfile_chars_per_column = 20
 
 
 
@@ -138,6 +138,8 @@ def generate_bw_ascii_art(img, use_unicode = True,
 ### Main routine
 if __name__ == "__main__":
 
+  padded = lambda s: ("{:" + str(cfgfile_chars_per_column) + "}").format(s)
+
   hostname = os.uname().nodename
 
   # Parse the command line arguments
@@ -207,7 +209,7 @@ if __name__ == "__main__":
       img.save(args.output)
 
     except Exception as e:
-      print("Error saving QR code image: {}".format(e), file = sys.stderr)
+      print("Error saving QR code image: {}".format(e))
       exit(-1)
 
     print("Saved PNG image of QR code into {}".format(args.output))
@@ -217,6 +219,7 @@ if __name__ == "__main__":
 
   # Ask whether the secret should be saved (needed for PAM authentication,
   # forbidden to get hashes
+  print()
   print("Save the secret? Hint: the secret must be saved to use the account " \
 	"for PAM authentication but must not be saved to use it to get " \
 	"hashes) [Y/N]? ", end = "")
@@ -226,13 +229,38 @@ if __name__ == "__main__":
 
   # Ask confirmation to save this new user account configuration into the
   # configuration file
+  print()
   print("Save account {} for user {} into {} {}[Y/N]? ".
 	format(account, args.user, args.cfgfile,
 		"WITHOUT SECRET " if secret is None else ""), end = "")
 
   if input().upper() != "Y":
+    print()
     print("Aborted")
     exit(0)
+
+  # If the configuration file doesn't exist, ask if we should create it
+  if not os.path.exists(args.cfgfile):
+    print()
+    print("{} doesn't exist. Create it? [Y/N] ".format(args.cfgfile), end = "")
+
+    if input().upper() == "N":
+      print()
+      print("Aborted")
+      exit(0)
+
+    # Create an empty configuration file
+    try:
+      with open(args.cfgfile, "w") as f:
+        print(padded("# Username") + padded("OATH account") + \
+		padded("OATH password") + padded("OATH secret"), file = f)
+
+    except Exception as e:
+      print()
+      print("Error creating configuration file {}: {}".format(args.cfgfile, e))
+      exit(-1)
+
+  print()
 
   # Read in the configuration file
   try:
@@ -240,8 +268,7 @@ if __name__ == "__main__":
       lines = f.read().splitlines()
 
   except Exception as e:
-    print("Error reading configuration file {}: {}".format(args.cfgfile, e),
-		file = sys.stderr)
+    print("Error reading configuration file {}: {}".format(args.cfgfile, e))
     exit(-1)
 
   # Prune any existing configuration lines that concern this user
@@ -250,8 +277,8 @@ if __name__ == "__main__":
   # Add the new configuration line
   hexsecret = "-" if secret is None else \
 		"".join([format(v, "02x") for v in secret])
-  lines.append("{} {} {} {}".format(args.user, account,
-				password if password else "-", hexsecret))
+  lines.append(padded(args.user) + padded(account) + \
+		padded(password if password else "-") + padded(hexsecret))
 
   # Save the modified configuration back into the configuration file
   try:
@@ -260,10 +287,11 @@ if __name__ == "__main__":
         print(l, file = f)
 
   except Exception as e:
-    print("Error writing configuration file {}: {}".format(args.cfgfile, e),
-		file = sys.stderr)
+    print("Error writing configuration file {}: {}".format(args.cfgfile, e))
     exit(-1)
 
   # All done
   print("Done")
+  print()
+
   exit(0)
