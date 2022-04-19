@@ -11,7 +11,7 @@ using the user's registered account and password.
 The gethash command is quite specifically designed to take a disk UUID as a
 challenge and return the hash in a format understandable by cryptsetup, for the
 purpose of unlocking encrypted volumes with an OTP account stored on a Vivokey
-token. But it may be used for other purposes that required token-calculated
+token. But it may be used for other purposes that require token-calculated
 SHA hashes.
 
 The challenge must be supplied to the tool's stdin as an ASCII-encoded hex
