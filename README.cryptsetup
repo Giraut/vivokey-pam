@@ -87,7 +87,7 @@ Usage example #1: setting up and using a LUKS encrypted disk image
 
       umount /mnt
 
-   7/ Close / unmap the LUKS volume from /dev/mapper
+   7/ Close / unmap the LUKS encrypted volume from /dev/mapper
 
       cryptsetup close mpr
 
@@ -97,7 +97,7 @@ Usage example #2: setting up and using a plain dm-crypt encrypted partition
 ---------------------------------------------------------------------------
 
    In the following example, the disk partition is /dev/sde5
-   PLEASE NOTE THAT ALL THE DATA ON THE PARTITION IS LOST!
+   PLEASE NOTE THAT ALL THE DATA ON THE PARTITION WILL BE LOST!
 
    As root:
 
@@ -121,6 +121,6 @@ Usage example #2: setting up and using a plain dm-crypt encrypted partition
 
       umount /mnt
 
-   5/ Close / unmap the LUKS volume from /dev/mapper
+   5/ Close / unmap the plain dm-crypt encrypted volume from /dev/mapper
 
       cryptsetup close mpr
