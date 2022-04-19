@@ -4,15 +4,16 @@
 This utility:
 
 1/ Generates the QR code the user needs to create the account in the
-   Vivokey Authenticator app. See:
+   Vivokey Authenticator or Yubikey Authenticator app. See:
 
    https://play.google.com/store/apps/details?id=com.vivokey.vivoauth
+   https://play.google.com/store/apps/details?id=com.yubico.yubioath
 
 2/ Saves the account name, OATH password and OATH secret for this user in the
    Vivokey PAM configuration file at /etc/users.vivokey. Those details are
    used by the Vivokey PAM module to query the cryptographic hash for the
-   correct OATH account in the Vivokey device and verify it against the hash
-   calculated locally using the stored secret
+   correct OATH account in the Vivokey or Yubikey NFC device and verify it
+   against the hash calculated locally using the stored secret
 
 The QR code may be saved into a PNG image file using -o <file>. This image may
 then be mailed to the user.
@@ -22,17 +23,18 @@ ASCII art.
 
 This is convenient if the user is around while doing the setup - particularly
 since they'll have to type in their OATH password if they have one set up in
-their Vivokey device.
+their Vivokey or Yubikey NFC device.
 
 But more importantly, it avoids saving the secret to a file and mailing it,
 and having to ask the user to carefully delete the image file and email after
-they're done setting up the account in the Vivokey Authenticator app.
+they're done setting up the account in the Vivokey Authenticator or
+Yubikey Authenticator app.
 
 By default, the account name is <username>@<hostname>. However, this may be
 overridden and set to anything using -a <name>. Care should be taken that the
-account name be unique in the Vivokey device, as the PAM module relies on
-it to be uniquely distinguishable from all other OATH accounts stored on
-the device.
+account name be unique in the Vivokey or Yubikey NFC device, as the PAM module
+relies on it to be uniquely distinguishable from all other OATH accounts stored
+on the device.
 """
 
 ### Modules

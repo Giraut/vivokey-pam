@@ -4,7 +4,7 @@
 
 
 PAM module and configuration utility to perform user authentication (1FA or 2FA)
-using a Vivokey device and the Vivokey OTP applet.
+using a Vivokey or Yubikey OTP applet.
 
 
 
@@ -63,7 +63,8 @@ PAM configuration
    then running pam-auth-update and enabling Vivokey authentication.
 
    Then for subsequent logins, you can either type your regular password or
-   present your Vivokey transponder to the reader (within 2 seconds).
+   present your Vivokey or Yubikey NFC transponder to the reader
+   (within 2 seconds).
 
    Or, for example, if your system's PAM stack must be configured manually
    and you want to use Vivokey authentication as a second factor, you could
@@ -92,12 +93,12 @@ PAM configuration
    users not listed in the /etc/users.vivokey "through" - instead of denying
    them authentication by default. Without -au, users who don't have a Vivokey
    OTP setup could not log in anymore. If it should be desirable that all the
-   users use a Vivokey device to login, all of them should be enrolled in
-   /etc/users.vivokey and the -au should then be dropped.
+   users use a Vivokey or Yubikey NFC device to login, all of them should be
+   enrolled in /etc/users.vivokey and the -au should then be dropped.
 
-   If the wait is not long enough to present the Vivokey device to the reader,
-   use -w <wait> or wait=<wait> as argument to vivokey_py to orverride the
-   default 2-second wait.
+   If the wait is not long enough to present the Vivokey or Yubikey NFC device
+   to the reader, use -w <wait> or wait=<wait> as argument to vivokey_py to
+   orverride the default 2-second wait.
 
    If the reader isn't recognized, use -r <name> or reader=<name> to specifiy
    the name matching the reader.
@@ -114,15 +115,15 @@ OATH account setup
    Using vivokey_setup_account.py as root, for a given user, you can:
 
    1/ Generate the QR code they need to create the account in the
-      Vivokey Authenticator app. See:
+      Vivokey Authenticator or Yubikey Authenticator app. See:
 
       https://play.google.com/store/apps/details?id=com.vivokey.vivoauth
 
    2/ Save the account name, OATH password and OATH secret for this user in the
       Vivokey PAM configuration file at /etc/users.vivokey. Those details are
       used by the Vivokey PAM module to query the cryptographic hash for the
-      correct OATH account in the Vivokey device and verify it against the hash
-      calculated locally using the stored secret
+      correct OATH account in the Vivokey or Yubikey NFC device and verify it
+      against the hash calculated locally using the stored secret
 
    The QR code may be saved into a PNG image file using -o <file>. This image
    may then be mailed to the user.
@@ -153,17 +154,18 @@ OATH account setup
 
    This is convenient if the user is around while doing the setup - particularly
    since they'll have to type in their OATH password if they have one set up in
-   their Vivokey device.
+   their Vivokey or Yubikey NFC device.
 
    But more importantly, it avoids saving the secret to a file and mailing it,
-   and having to ask the user to carefully delete the image file and email after
-   they're done setting up the account in the Vivokey Authenticator app.
+   and having to ask the user to carefully delete the image file and email
+   after they're done setting up the account in the Vivokey Authenticator or
+   Yubikey Authenticator app.
 
    By default, the account name is <username>@<hostname>. However, this may be
-   overridden and set to anything using -a <name>. Care should be taken that the
-   account name be unique in the Vivokey device, as the PAM module relies on
-   it to be uniquely distinguishable from all other OATH accounts stored on
-   the device.
+   overridden and set to anything using -a <name>. Care should be taken that
+   the account name be unique in the Vivokey or Yubikey NFC device, as the PAM
+   module relies on it to be uniquely distinguishable from all other OATH
+   accounts stored on the device.
 
 
 
@@ -172,7 +174,7 @@ Use with cryptsetup
 
    When used as a standalone utility with the "gethash" command, vivokey_pam.py
    may also be used with cryptsetup to access encrypted volumes with a
-   Vivokey OTP token.
+   Vivokey or Yubikey NFC OTP token.
 
    See README.cryptsetup for details.
 

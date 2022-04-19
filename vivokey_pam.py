@@ -1,6 +1,6 @@
 #!/usr/bin/python3
-"""PAM module to do user authentication using a Vivokey smartcard and the
-Vivokey OTP applet.
+"""PAM module and configuration utility to perform user authentication
+(1FA or 2FA) using a Vivokey or Yubikey OTP applet.
 
 This module is meant to be called by the pam_exec.so module to provide an
 optional or a second authentication factor in the PAM stack.
@@ -39,7 +39,7 @@ Auth-Initial:
 then running pam-auth-update and enabling Vivokey authentication.
 
 Then for subsequent logins, you can either type your regular password or present
-your Vivokey transponder to the reader (within 2 seconds).
+your Vivokey or Yubikey NFC transponder to the reader (within 2 seconds).
 
 Or, for example, if your system's PAM stack must be configured manually and
 you want to use Vivokey authentication as a second factor, you could define
@@ -67,12 +67,12 @@ In this case, note the use of the -au flag: this tells vivokey_pam.py to let
 users not listed in the /etc/users.vivokey "through" - instead of denying them
 authentication by default. Without -au, users who don't have a Vivokey OTP
 setup could not log in anymore. If it should be desirable that all the users
-use a Vivokey device to login, all of them should be enrolled in
+use a Vivokey or Yubikey NFC device to login, all of them should be enrolled in
 /etc/users.vivokey and the -au should then be dropped.
 
-If the wait is not long enough to present the Vivokey device to the reader, use
--w <wait> or wait=<wait> as argument to vivokey_py to orverride the default
-2-second wait.
+If the wait is not long enough to present the Vivokey or Yubikey NFC device to
+the reader, use -w <wait> or wait=<wait> as argument to vivokey_py to orverride
+the default 2-second wait.
 
 If the reader isn't recognized, use -r <name> or reader=<name> to specifiy a
 name matching the reader.
@@ -115,7 +115,9 @@ class pcsc_oath():
   """
 
   # Defines
-  DEFAULT_OATH_AID = "a0000007470061fc54d5"	# Vivokey OTP applet
+  DEFAULT_OATH_AIDS = ("a0000007470061fc54d5", "a0000005272101") # Vivokey, then
+								 # Yubikey OTP
+								 # applets
   DEFAULT_PERIOD = 30 #s
 
   INS_SELECT = 0xa4
@@ -132,15 +134,16 @@ class pcsc_oath():
   SW1_OK = 0x90
   SW2_OK = 0x00
 
-  SW1_AUTH_ERROR = 0x69
+  SW1_NOT_ALLOWED = 0x69
   SW2_AUTH_REQUIRED = 0x82
   SW2_AUTH_FAILED = 0x84
 
   SW1_FAILED = 0x69
   SW2_NO_SUCH_OBJECT = 0x84
 
-  SW1_WRONG_SYNTAX = 0x6a
+  SW1_WRONG_PARAMS = 0x6a
   SW2_WRONG_SYNTAX = 0x80
+  SW2_NOT_FOUND = 0x82
 
   SW1_MORE_DATA = 0x61
 
@@ -151,12 +154,12 @@ class pcsc_oath():
 
 
 
-  def __init__(self, oath_aid = DEFAULT_OATH_AID, period = DEFAULT_PERIOD):
+  def __init__(self, oath_aids = DEFAULT_OATH_AIDS, period = DEFAULT_PERIOD):
     """__init__ method
     """
 
     self.readers_regex = "^.*$"
-    self.oath_aid = list(bytes.fromhex(oath_aid))
+    self.oath_aids = [list(bytes.fromhex(aid)) for aid in oath_aids]
     self.period = period
 
     self.all_readers = []
@@ -387,26 +390,40 @@ class pcsc_oath():
       # Whatever happens next, try to disconnect the card before returning
       disconnect_card = True
 
-      # Select the OATH AID
-      errmsg, ec, r, response = self._send_apdu(hcard, dwActiveProtocol,
+      # Try each OATH AID in turn
+      for aid in self.oath_aids:
+
+        # Select the OATH AID
+        errmsg, ec, r, response = self._send_apdu(hcard, dwActiveProtocol,
 					[0, self.INS_SELECT, self.P1_SELECT,
-					self.P2_SELECT,
-					len(self.oath_aid)] + self.oath_aid)
+					self.P2_SELECT, len(aid)] + aid)
 
-      if errmsg or r != sc.SCARD_S_SUCCESS:
-        release_ctx = True
-        errmsg = "error transmitting OATH AID selection command{}".format(
+        if errmsg or r != sc.SCARD_S_SUCCESS:
+          release_ctx = True
+          errmsg = "error transmitting OATH AID selection command{}".format(
 			": {}".format(errmsg) if errmsg else "")
-        errcritical = ec
-        continue
+          errcritical = ec
+          break
 
-      # Did we get a response error?
-      if response[-2:] != [self.SW1_OK, self.SW2_OK]:
-        errmsg = "error {:02X}{:02X} from OATH AID selection command".format(
+        # Did we get OK?
+        if response[-2:] == [self.SW1_OK, self.SW2_OK]:
+          break
+
+        # Did we get an error other than NOT_FOUND?
+        if response[-2:] != [self.SW1_WRONG_PARAMS, self.SW2_NOT_FOUND]:
+          errmsg = "error {:02X}{:02X} from OATH AID selection command".format(
 			response[-2], response[-1])
+          errcritical = False
+          break
+
+        # Try the next AID
+        errmsg = "OATH application not found".format(response[-2], response[-1])
         errcritical = False
+
+      if errmsg:
         continue
 
+      # Decode the TLVs in the response
       errmsg, tlvs = self._untlv(response[:-2], do_dict = True)
       if errmsg:
         continue
@@ -454,8 +471,8 @@ class pcsc_oath():
         if response[-2:] != [self.SW1_OK, self.SW2_OK]:
 
           # Did the authentication fail?
-          if response[-2:] == [self.SW1_AUTH_ERROR, self.SW2_AUTH_FAILED] or \
-		response[-2:] == [self.SW1_WRONG_SYNTAX, self.SW2_WRONG_SYNTAX]:
+          if response[-2:] == [self.SW1_NOT_ALLOWED, self.SW2_AUTH_FAILED] or \
+		response[-2:] == [self.SW1_WRONG_PARAMS, self.SW2_WRONG_SYNTAX]:
             errmsg = "authentication failed"
 
           else:
@@ -508,7 +525,7 @@ class pcsc_oath():
       if response[-2:] != [self.SW1_OK, self.SW2_OK]:
 
         # Is authentication required?
-        if response[-2:] == [self.SW1_AUTH_ERROR, self.SW2_AUTH_REQUIRED]:
+        if response[-2:] == [self.SW1_NOT_ALLOWED, self.SW2_AUTH_REQUIRED]:
           errmsg = "authentication required"
 
         elif response[-2:] == [self.SW1_FAILED, self.SW2_NO_SUCH_OBJECT]:
@@ -576,7 +593,8 @@ def parse_args(argv, user):
 	"Usage: {}".format(argv[0]),
 	"",
 	"       -r <reader> or   Name of the NFC reader to talk to the Vivokey",
-	"       reader=<reader>  Default {}".format(default_reader),
+	"       reader=<reader>  or Yubikey NFC device. Default {}".\
+					format(default_reader),
 	"",
 	"       -c <path> or     Path to the configuration file",
 	"       cfgfile=<path>   Default {}".format(default_cfgfile),
