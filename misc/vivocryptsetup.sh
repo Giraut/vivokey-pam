@@ -8,6 +8,12 @@ VIVOKEY_USER=enc
 VIVOKEY_READ_WAIT=5 #s
 CRYPT_MODE=plain
 
+# Uncomment this if cryptsetup gives you the following warning and the
+# encrypted partition can't be mounted:
+# WARNING: Using default options for cipher (aes-xts-plain64, key size 256 bits)
+# that could be incompatible with older versions.
+#CRYPTSETUP_OPTIONS="--cipher aes-cbc-essiv:sha256 --key-size 256 --hash ripemd160"
+
 
 
 # Show usage
@@ -34,7 +40,7 @@ DMNAME=${UUID}_$CRYPT_MODE
 DMPATH=/dev/mapper/$DMNAME
 
 # Map the encrypted partition in /dev/mapper using the hash as a passphrase
-if ! echo -n $HASH | cryptsetup open --type $CRYPT_MODE $1 $DMNAME -d-; then
+if ! echo -n $HASH | cryptsetup open --type $CRYPT_MODE $CRYPTSETUP_OPTIONS $1 $DMNAME -d-; then
   exit
 fi
 
